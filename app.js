@@ -32,8 +32,8 @@ app.post('/submitpage', (req, res) => {
     
     const payload = {
         from: userId,
-        to: 90,
-        amount: 5,
+        to: 91,
+        amount: 50,
         reason: 'Play Tetris',
         pin: req.body.pin
     };
