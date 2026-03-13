@@ -5,7 +5,7 @@ Small Express app that protects a Tetris “arcade cabinet” behind Formbar log
 ### Clone
 
 ```bash
-git clone https://github.com/<your-org-or-user>/formbartetris.git
+git clone https://github.com/asa-db/formbartetris.git
 cd formbartetris
 ```
 
