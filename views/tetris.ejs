@@ -208,7 +208,7 @@
         <h1 style="margin: 0; font-size: 3rem;">TETRIS</h1>
         <div style="color:#ff0d72; margin-bottom: 25px; font-weight: bold;">WAIFU EDITION</div>
         <button id="primary-btn" class="btn" onclick="handlePrimaryBtn()">START GAME</button>
-        <button id="restart-btn" class="btn secondary" style="display:none;" onclick="startGame()">RESTART GAME</button>
+        <button id="restart-btn" class="btn secondary" style="display:none;" onclick="window.location.href='/'">RESTART GAME</button>
         <button class="btn secondary" onclick="openPanel('companion-panel')">COMPANIONS</button>
         <button class="btn secondary" onclick="openPanel('settings-panel')">SETTINGS & COLORS</button>
       </div>
@@ -250,7 +250,8 @@
       'Tohru': { file: 'tohru.gif', phrases: ["D is for Dragon!", "Eat my tail!", "Kobayashi-san!", "Moe moe kyun!"] },
       'Teto': { file: 'teto.gif', phrases: ["tetotetotetotetotetotetotetotetoteto", "BAAAKA", "THEY'RE NOT DRILLS", "mmmmgh!"] },
       'Steve': { file: 'minecraft-steve.gif', phrases: ["Minecraft", "Breaking blocks and stuff", "BOOM BOOM BOOM", "don't mine at night" ] },
-      'Freddy': { file: 'freddy.gif', phrases: ["Haur hur ha huar har", "HAUR Hur hur", "Bite of 87", "UwU" ] }
+      'Freddy': { file: 'freddy.gif', phrases: ["Haur hur ha huar har", "HAUR Hur hur", "Bite of 87", "UwU" ] },
+      'Baldi': { file: 'baldi-dance.gif', phrases: ["Welcome to my schoolhouse!", "Time for some math!","Oh oh oh hi there!", "Welcome to my isla- Schoolhouse!", "[Insert lyrics to DAGames Baldi song here]" ] }
     };
 
     const canvas = document.getElementById('tetris');
@@ -393,6 +394,7 @@
         console.log("u lost lol");
         gameState = 'GAMEOVER'; sounds.bgm.pause(); sounds.gameover.play();
         document.getElementById('overlay').style.display = 'flex';
+        document.getElementById('primary-btn').onclick = () => window.location.href = '/';
         document.getElementById('primary-btn').innerText = "RESTART";
       }
     }
