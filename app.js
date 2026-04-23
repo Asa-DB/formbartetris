@@ -1,7 +1,16 @@
 const express = require('express');
+const http = require('http');
 const session = require('express-session');
 const jwt = require('jsonwebtoken'); // Needed to decode the token
 const path = require("path");
+const { Server } = require('socket.io');
+const {
+    initDb,
+    saveUser,
+    saveScore,
+    createMatch,
+    getTopScores,
+} = require('./db');
 
 // Load the environment variables from the .env file
 // .env files are hidden and ignored by git so users and developers can't see them
@@ -12,23 +21,49 @@ const dotenv = require('dotenv');
 dotenv.config();
 const port = process.env.PORT;
 const sessionSecret = process.env.SECRET;
+const jwtSecret = process.env.JWT_SECRET;
 const formbarAddress = process.env.FORMBAR_URL;
 const formbarLogin = formbarAddress + '/oauth';
 const thisUrl = process.env.THIS_URL;
 const thisUrlLogin = thisUrl + '/login';
 const payUserId = process.env.PAYUSER;
 const entryFee = process.env.ENTRYFEE;
+const isProduction = process.env.NODE_ENV === 'production';
+
+if (!sessionSecret) {
+    throw new Error('Missing SECRET in environment variables');
+}
+
+if (!jwtSecret) {
+    throw new Error('Missing JWT_SECRET in environment variables');
+}
 
 const app = express(); // Create the express app
+const server = http.createServer(app);
+
+initDb();
+
+if (isProduction) {
+    app.set('trust proxy', 1);
+}
 
 // Middleware to create a session
 // This is used to store the user's session data
-app.use(session({
+const sessionMiddleware = session({
+    name: 'formbar-tetris.sid',
     secret: sessionSecret,
     resave: false,
-    saveUninitialized: true,
-    cookie: { secure: false }
-}));
+    saveUninitialized: false,
+    unset: 'destroy',
+    cookie: {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: isProduction,
+        maxAge: 1000 * 60 * 60 * 4,
+    }
+});
+
+app.use(sessionMiddleware);
 
 // Set the view engine to EJS
 // EJS is a templating engine for Node.js
@@ -42,29 +77,50 @@ app.set('views', path.join(__dirname, 'views'));
 // Needed to read POST data from the form
 app.use(express.urlencoded({ extended: true }));
 
+function clearSession(req) {
+    req.session.token = null;
+    req.session.user = null;
+    req.session.refreshToken = null;
+    req.session.hasPaid = false;
+}
+
+function redirectToLogin(res) {
+    res.redirect(`${formbarAddress}/oauth?redirectURL=${thisUrlLogin}`);
+}
+
+function verifyToken(token) {
+    return jwt.verify(token, jwtSecret);
+}
+
+function wrapExpressMiddleware(middleware) {
+    return (socket, next) => middleware(socket.request, {}, next);
+}
+
 // Middleware to check if the user is authenticated
 // If not, redirect to the login page
 function isAuthenticated(req, res, next) {
     // Does this session have a user already?
-    if (req.session.user) { 
-        // Get the token data from the session
-        const tokenData = req.session.token;
-        // See if it's expired
+    if (req.session.user && req.session.token) { 
         try {
-            // Check if the token has expired
-            const currentTime = Math.floor(Date.now() / 1000);
-            if (tokenData.exp < currentTime) {
-                throw new Error('Token has expired');
-            }
+            const tokenData = verifyToken(req.session.token);
+            req.session.user = tokenData.displayName;
+            req.session.userId = tokenData.id;
+            req.session.refreshToken = tokenData.refreshToken;
             // If not, continue to the next middleware  
             next();
         } catch (err) {
-            // If it's expired, redirect to the login page  
-            res.redirect(`${formbarAddress}/oauth?refreshToken=${tokenData.refreshToken}&redirectURL=${thisUrl}`);
+            const refreshToken = req.session.refreshToken;
+            clearSession(req);
+
+            if (err.name === 'TokenExpiredError' && refreshToken) {
+                return res.redirect(`${formbarAddress}/oauth?refreshToken=${refreshToken}&redirectURL=${thisUrl}`);
+            }
+
+            return redirectToLogin(res);
         }
     } else {
         // If no user, redirect to the login page
-        res.redirect(`${formbarAddress}/oauth?redirectURL=${thisUrlLogin}`);
+        redirectToLogin(res);
     }
 }
 
@@ -72,16 +128,23 @@ function isAuthenticated(req, res, next) {
 app.get('/login', (req, res) => {
     // Formbar will send a token in the query string if the user successfully logged in
     if (req.query.token) {
-        let tokenData = jwt.decode(req.query.token);
-        req.session.token = tokenData;
-        // Store the user's display name in the session
-        req.session.user = tokenData.displayName;
-        // Redirect to the home page
-        res.redirect('/');
-    } else {
-        // If no token, redirect to the Formbar login page
-        res.redirect(`${formbarLogin}?redirectURL=${thisUrlLogin}`);
-    };
+        try {
+            const tokenData = verifyToken(req.query.token);
+            req.session.token = req.query.token;
+            req.session.user = tokenData.displayName;
+            req.session.userId = tokenData.id;
+            req.session.refreshToken = tokenData.refreshToken;
+            saveUser(tokenData.id, tokenData.displayName);
+            // Redirect to the home page
+            return res.redirect('/');
+        } catch (err) {
+            clearSession(req);
+            return res.status(401).send('invalid login token');
+        }
+    }
+
+    // If no token, redirect to the Formbar login page
+    res.redirect(`${formbarLogin}?redirectURL=${thisUrlLogin}`);
 });
 
 // Home page
@@ -97,7 +160,12 @@ app.get('/tetris', isAuthenticated, (req, res) => {
     if (req.session.hasPaid) {
         // Reset the hasPaid flag so the user can play again
         req.session.hasPaid = false;
-        res.render('tetris');
+        res.render('tetris', {
+            player: {
+                userId: req.session.userId,
+                username: req.session.user,
+            }
+        });
     } else {
         // If the user hasn't paid, redirect to the home page
         res.redirect('/');
@@ -109,7 +177,7 @@ app.get('/tetris', isAuthenticated, (req, res) => {
 app.post('/submitpage', isAuthenticated, (req, res) => {
     // Get the user's ID from the session
     // You don't need to get it from the form because the user is already authenticated
-    const userId = req.session.token.id;
+    const userId = req.session.userId;
     // Create the payload for the API request
     // The payload is the data that will be sent to the API request
     const payload = {
@@ -146,13 +214,207 @@ app.post('/submitpage', isAuthenticated, (req, res) => {
     });
 });
 
+// tiny helper routes for testing the db stuff while the project is still small
+app.get('/scores/top', isAuthenticated, (req, res) => {
+    res.json(getTopScores());
+});
+
+app.post('/scores/save', isAuthenticated, (req, res) => {
+    const score = Number(req.body.score);
+
+    if (!Number.isFinite(score)) {
+        return res.status(400).json({ success: false, message: 'invalid score' });
+    }
+
+    saveScore(req.session.userId, score);
+    res.json({ success: true });
+});
+
+app.post('/matches/create', isAuthenticated, (req, res) => {
+    const player1 = Number(req.body.player1);
+    const player2 = Number(req.body.player2);
+    const winner = req.body.winner ? Number(req.body.winner) : null;
+
+    if (!Number.isInteger(player1) || !Number.isInteger(player2)) {
+        return res.status(400).json({ success: false, message: 'invalid match players' });
+    }
+
+    const result = createMatch(player1, player2, winner);
+    res.json({ success: true, id: result.lastInsertRowid });
+});
+
 // Put all the static files in the public folder so they're organized
 // Also prevents users from accessing files outside the public folder
 // Put this at the bottom so it only runs for requests that don't match any other routes
 app.use(express.static(path.join(__dirname, 'public')));
 
+const io = new Server(server, {
+    cors: {
+        origin: thisUrl,
+        credentials: true,
+    }
+});
+
+let waitingPlayer = null;
+const matches = {};
+
+io.use(wrapExpressMiddleware(sessionMiddleware));
+
+function makeMatchPayload(roomId, p1, p2) {
+    return {
+        roomId,
+        players: [
+            { id: p1.userId, username: p1.username },
+            { id: p2.userId, username: p2.username }
+        ]
+    };
+}
+
+function removeSocketFromMatch(socket) {
+    const roomId = socket.data.roomId;
+    if (!roomId || !matches[roomId]) return;
+
+    const match = matches[roomId];
+    const otherPlayer = match.p1.socketId === socket.id ? match.p2 : match.p1;
+    const otherSocket = io.sockets.sockets.get(otherPlayer.socketId);
+
+    if (otherSocket) {
+        otherSocket.emit('opponentWin', { roomId });
+    }
+
+    delete matches[roomId];
+}
+
+io.on('connection', socket => {
+    const session = socket.request.session;
+
+    if (!session || !session.userId || !session.user) {
+        socket.emit('queueError', { message: 'not logged in' });
+        socket.disconnect();
+        return;
+    }
+
+    socket.data.userId = session.userId;
+    socket.data.username = session.user;
+
+    socket.emit('socketReady', {
+        userId: socket.data.userId,
+        username: socket.data.username
+    });
+
+    socket.on('joinQueue', () => {
+        if (socket.data.roomId) {
+            socket.emit('queueError', { message: 'already in a match' });
+            return;
+        }
+
+        if (waitingPlayer && waitingPlayer.socketId === socket.id) {
+            socket.emit('queueJoined', { position: 1 });
+            return;
+        }
+
+        if (!waitingPlayer) {
+            waitingPlayer = {
+                socketId: socket.id,
+                userId: socket.data.userId,
+                username: socket.data.username
+            };
+
+            socket.emit('queueJoined', { position: 1 });
+            return;
+        }
+
+        if (waitingPlayer.userId === socket.data.userId) {
+            socket.emit('queueJoined', { position: 1 });
+            return;
+        }
+
+        const p1 = waitingPlayer;
+        const p2 = {
+            socketId: socket.id,
+            userId: socket.data.userId,
+            username: socket.data.username
+        };
+
+        waitingPlayer = null;
+
+        const roomId = `${p1.userId}_${p2.userId}`;
+        const p1Socket = io.sockets.sockets.get(p1.socketId);
+        const p2Socket = io.sockets.sockets.get(p2.socketId);
+
+        if (!p1Socket || !p2Socket) {
+            if (p1Socket) {
+                waitingPlayer = p1;
+                p1Socket.emit('queueJoined', { position: 1 });
+            }
+            if (p2Socket && !p1Socket) {
+                waitingPlayer = p2;
+                p2Socket.emit('queueJoined', { position: 1 });
+            }
+            return;
+        }
+
+        matches[roomId] = { p1, p2 };
+        p1Socket.join(roomId);
+        p2Socket.join(roomId);
+        p1Socket.data.roomId = roomId;
+        p2Socket.data.roomId = roomId;
+
+        const payload = makeMatchPayload(roomId, p1, p2);
+        p1Socket.emit('matchFound', payload);
+        p2Socket.emit('matchFound', payload);
+    });
+
+    socket.on('leaveQueue', () => {
+        if (waitingPlayer && waitingPlayer.socketId === socket.id) {
+            waitingPlayer = null;
+        }
+    });
+
+    socket.on('clearLines', data => {
+        const roomId = socket.data.roomId;
+        if (!roomId || !matches[roomId]) return;
+
+        const lines = Number(data && data.lines);
+        const garbage = Math.max(0, lines - 1);
+        if (garbage <= 0) return;
+
+        const match = matches[roomId];
+        const otherPlayer = match.p1.socketId === socket.id ? match.p2 : match.p1;
+        const otherSocket = io.sockets.sockets.get(otherPlayer.socketId);
+        if (!otherSocket) return;
+
+        otherSocket.emit('garbage', { lines: garbage });
+    });
+
+    socket.on('gameOver', () => {
+        const roomId = socket.data.roomId;
+        if (!roomId || !matches[roomId]) return;
+
+        const match = matches[roomId];
+        const otherPlayer = match.p1.socketId === socket.id ? match.p2 : match.p1;
+        const otherSocket = io.sockets.sockets.get(otherPlayer.socketId);
+
+        if (otherSocket) {
+            otherSocket.emit('opponentWin', { roomId });
+            otherSocket.data.roomId = null;
+        }
+
+        socket.data.roomId = null;
+        delete matches[roomId];
+    });
+
+    socket.on('disconnect', () => {
+        if (waitingPlayer && waitingPlayer.socketId === socket.id) {
+            waitingPlayer = null;
+        }
+
+        removeSocketFromMatch(socket);
+    });
+});
+
 // Start the server
-app.listen(port, () => {
+server.listen(port, () => {
     console.log(`Server is running on ${thisUrl}`);
 });
 

@@ -1,0 +1,30 @@
+const TABLES_SQL = `
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT
+);
+
+CREATE TABLE IF NOT EXISTS scores (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    score INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS matches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    player1 INTEGER NOT NULL,
+    player2 INTEGER NOT NULL,
+    winner INTEGER,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (player1) REFERENCES users(id),
+    FOREIGN KEY (player2) REFERENCES users(id),
+    FOREIGN KEY (winner) REFERENCES users(id)
+);
+`;
+
+module.exports = {
+    TABLES_SQL,
+};
