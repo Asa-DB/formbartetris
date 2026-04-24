@@ -1,4 +1,5 @@
 const express = require('express');
+const fs = require('fs');
 const http = require('http');
 const session = require('express-session');
 const jwt = require('jsonwebtoken'); // Needed to decode the token
@@ -19,9 +20,18 @@ const {
 // .env_template shows developers what variables are needed and what they do
 const dotenv = require('dotenv');
 dotenv.config();
+const DEFAULT_SESSION_SECRET = 'DontForgetToSetThis';
+const DEFAULT_JWT_SECRET = 'UseTheSameSigningSecretAsFormbar';
+const localDevAuthPath = path.join(__dirname, 'local', 'dev-auth.js');
+const localDevAuth = fs.existsSync(localDevAuthPath) ? require(localDevAuthPath) : null;
+const isLocalDevAuthEnabled = Boolean(localDevAuth && localDevAuth.enabled);
+
 const port = process.env.PORT;
-const sessionSecret = process.env.SECRET;
-const jwtSecret = process.env.JWT_SECRET;
+const sessionSecret = process.env.SECRET || (isLocalDevAuthEnabled ? 'local-dev-session-secret' : undefined);
+const configuredJwtSecret = process.env.JWT_SECRET;
+const jwtSecret = configuredJwtSecret && configuredJwtSecret !== DEFAULT_JWT_SECRET
+    ? configuredJwtSecret
+    : sessionSecret;
 const formbarAddress = process.env.FORMBAR_URL;
 const formbarLogin = formbarAddress + '/oauth';
 const thisUrl = process.env.THIS_URL;
@@ -34,8 +44,12 @@ if (!sessionSecret) {
     throw new Error('Missing SECRET in environment variables');
 }
 
-if (!jwtSecret) {
-    throw new Error('Missing JWT_SECRET in environment variables');
+if (!isLocalDevAuthEnabled && sessionSecret === DEFAULT_SESSION_SECRET) {
+    throw new Error('SECRET is still set to the placeholder value; replace it with the Formbar signing secret');
+}
+
+if (!isLocalDevAuthEnabled && !jwtSecret) {
+    throw new Error('Missing JWT secret in environment variables');
 }
 
 const app = express(); // Create the express app
@@ -80,11 +94,29 @@ app.use(express.urlencoded({ extended: true }));
 function clearSession(req) {
     req.session.token = null;
     req.session.user = null;
+    req.session.userId = null;
     req.session.refreshToken = null;
     req.session.hasPaid = false;
 }
 
+function setLocalDevSession(req) {
+    const user = localDevAuth.user || {};
+    req.session.token = 'local-dev-token';
+    req.session.user = user.displayName || 'Local Tester';
+    req.session.userId = user.id || 1;
+    req.session.refreshToken = null;
+    req.session.hasPaid = false;
+}
+
+function isLocalDevSession(req) {
+    return isLocalDevAuthEnabled && req.session.token === 'local-dev-token';
+}
+
 function redirectToLogin(res) {
+    if (isLocalDevAuthEnabled) {
+        return res.redirect('/login');
+    }
+
     res.redirect(`${formbarAddress}/oauth?redirectURL=${thisUrlLogin}`);
 }
 
@@ -99,6 +131,10 @@ function wrapExpressMiddleware(middleware) {
 // Middleware to check if the user is authenticated
 // If not, redirect to the login page
 function isAuthenticated(req, res, next) {
+    if (isLocalDevSession(req)) {
+        return next();
+    }
+
     // Does this session have a user already?
     if (req.session.user && req.session.token) { 
         try {
@@ -126,6 +162,11 @@ function isAuthenticated(req, res, next) {
 
 // Login page
 app.get('/login', (req, res) => {
+    if (isLocalDevAuthEnabled) {
+        setLocalDevSession(req);
+        return res.redirect('/');
+    }
+
     // Formbar will send a token in the query string if the user successfully logged in
     if (req.query.token) {
         try {
@@ -178,6 +219,19 @@ app.post('/submitpage', isAuthenticated, (req, res) => {
     // Get the user's ID from the session
     // You don't need to get it from the form because the user is already authenticated
     const userId = req.session.userId;
+
+    if (isLocalDevSession(req) || (localDevAuth && localDevAuth.skipPayment === true)) {
+        req.session.hasPaid = true;
+        return res.redirect('/tetris');
+    }
+
+    // Allow the arcade owner to self-checkout for debugging without requiring
+    // the payment API to process a transfer back to the same account.
+    if (String(userId) === String(payUserId)) {
+        req.session.hasPaid = true;
+        return res.redirect('/tetris');
+    }
+
     // Create the payload for the API request
     // The payload is the data that will be sent to the API request
     const payload = {
@@ -255,34 +309,145 @@ const io = new Server(server, {
     }
 });
 
-let waitingPlayer = null;
-const matches = {};
+const adjectives = ['pink', 'lazy', 'angry', 'blue', 'sleepy', 'tiny', 'happy', 'weird', 'fast', 'soft'];
+const animals = ['fox', 'cat', 'panda', 'turtle', 'bear', 'rabbit', 'otter', 'lizard', 'wolf', 'duck'];
+const rooms = {};
 
 io.use(wrapExpressMiddleware(sessionMiddleware));
 
-function makeMatchPayload(roomId, p1, p2) {
+function makeRoomName() {
+    let tries = 0;
+
+    while (tries < 1000) {
+        const adjective = adjectives[Math.floor(Math.random() * adjectives.length)];
+        const animal = animals[Math.floor(Math.random() * animals.length)];
+        const roomName = `${adjective} ${animal}`;
+
+        if (!rooms[roomName]) {
+            return roomName;
+        }
+
+        tries++;
+    }
+
+    return `room ${Date.now()}`;
+}
+
+function getRoomInfo(roomName) {
+    const room = rooms[roomName];
+    if (!room) return null;
+
+    const creatorSocket = room.creatorSocketId ? io.sockets.sockets.get(room.creatorSocketId) : null;
+
     return {
-        roomId,
-        players: [
-            { id: p1.userId, username: p1.username },
-            { id: p2.userId, username: p2.username }
-        ]
+        roomName,
+        passwordProtected: !!room.password,
+        creatorSocketId: room.creatorSocketId || null,
+        creatorUserId: creatorSocket ? creatorSocket.data.userId : null,
+        creatorUsername: creatorSocket ? creatorSocket.data.username : null,
+        players: room.players.map(socketId => {
+            const playerSocket = io.sockets.sockets.get(socketId);
+            return {
+                socketId,
+                userId: playerSocket ? playerSocket.data.userId : null,
+                username: playerSocket ? playerSocket.data.username : 'player'
+            };
+        }),
+        spectators: room.spectators.length
     };
 }
 
-function removeSocketFromMatch(socket) {
-    const roomId = socket.data.roomId;
-    if (!roomId || !matches[roomId]) return;
+function getRoomList() {
+    return Object.keys(rooms)
+        .sort()
+        .map(roomName => ({
+            roomName,
+            playerCount: rooms[roomName].players.length,
+            spectatorCount: rooms[roomName].spectators.length,
+            passwordProtected: !!rooms[roomName].password
+        }));
+}
 
-    const match = matches[roomId];
-    const otherPlayer = match.p1.socketId === socket.id ? match.p2 : match.p1;
-    const otherSocket = io.sockets.sockets.get(otherPlayer.socketId);
-
-    if (otherSocket) {
-        otherSocket.emit('opponentWin', { roomId });
+function sendRoomList(targetSocket) {
+    if (targetSocket) {
+        targetSocket.emit('roomsList', getRoomList());
+        return;
     }
 
-    delete matches[roomId];
+    io.emit('roomsList', getRoomList());
+}
+
+function removeSocketFromRoom(socket) {
+    const roomName = socket.data.roomName;
+    if (!roomName || !rooms[roomName]) return;
+
+    const room = rooms[roomName];
+    const wasPlayer = room.players.includes(socket.id);
+    const hadOpponent = room.players.some(id => id !== socket.id);
+
+    if (wasPlayer && socket.data.isPlaying && hadOpponent) {
+        sendToOtherPlayers(roomName, socket.id, 'opponentWin', { roomName });
+    }
+
+    if (wasPlayer) {
+        sendToSpectators(roomName, 'roomMessage', {
+            roomName,
+            message: `${socket.data.username} left`
+        });
+    }
+
+    room.players = room.players.filter(id => id !== socket.id);
+    room.spectators = room.spectators.filter(id => id !== socket.id);
+
+    if (room.creatorSocketId === socket.id) {
+        room.creatorSocketId = room.players[0] || null;
+    }
+
+    socket.leave(roomName);
+
+    if (room.players.length === 0 && room.spectators.length === 0) {
+        delete rooms[roomName];
+    } else {
+        io.to(roomName).emit('roomState', getRoomInfo(roomName));
+    }
+
+    sendRoomList();
+
+    socket.data.roomName = null;
+    socket.data.roomRole = null;
+    socket.data.isPlaying = false;
+}
+
+function sendToOtherPlayers(roomName, fromSocketId, eventName, payload) {
+    const room = rooms[roomName];
+    if (!room) return;
+
+    room.players.forEach(socketId => {
+        if (socketId === fromSocketId) return;
+        const otherSocket = io.sockets.sockets.get(socketId);
+        if (otherSocket) {
+            otherSocket.emit(eventName, payload);
+        }
+    });
+}
+
+function sendToSpectators(roomName, eventName, payload) {
+    const room = rooms[roomName];
+    if (!room) return;
+
+    room.spectators.forEach(socketId => {
+        const watcherSocket = io.sockets.sockets.get(socketId);
+        if (watcherSocket) {
+            watcherSocket.emit(eventName, payload);
+        }
+    });
+}
+
+function sendRoomState(roomName) {
+    const info = getRoomInfo(roomName);
+    if (info) {
+        io.to(roomName).emit('roomState', info);
+    }
 }
 
 io.on('connection', socket => {
@@ -302,114 +467,229 @@ io.on('connection', socket => {
         username: socket.data.username
     });
 
-    socket.on('joinQueue', () => {
-        if (socket.data.roomId) {
-            socket.emit('queueError', { message: 'already in a match' });
-            return;
-        }
+    sendRoomList(socket);
 
-        if (waitingPlayer && waitingPlayer.socketId === socket.id) {
-            socket.emit('queueJoined', { position: 1 });
-            return;
-        }
-
-        if (!waitingPlayer) {
-            waitingPlayer = {
-                socketId: socket.id,
-                userId: socket.data.userId,
-                username: socket.data.username
-            };
-
-            socket.emit('queueJoined', { position: 1 });
-            return;
-        }
-
-        if (waitingPlayer.userId === socket.data.userId) {
-            socket.emit('queueJoined', { position: 1 });
-            return;
-        }
-
-        const p1 = waitingPlayer;
-        const p2 = {
-            socketId: socket.id,
-            userId: socket.data.userId,
-            username: socket.data.username
-        };
-
-        waitingPlayer = null;
-
-        const roomId = `${p1.userId}_${p2.userId}`;
-        const p1Socket = io.sockets.sockets.get(p1.socketId);
-        const p2Socket = io.sockets.sockets.get(p2.socketId);
-
-        if (!p1Socket || !p2Socket) {
-            if (p1Socket) {
-                waitingPlayer = p1;
-                p1Socket.emit('queueJoined', { position: 1 });
-            }
-            if (p2Socket && !p1Socket) {
-                waitingPlayer = p2;
-                p2Socket.emit('queueJoined', { position: 1 });
-            }
-            return;
-        }
-
-        matches[roomId] = { p1, p2 };
-        p1Socket.join(roomId);
-        p2Socket.join(roomId);
-        p1Socket.data.roomId = roomId;
-        p2Socket.data.roomId = roomId;
-
-        const payload = makeMatchPayload(roomId, p1, p2);
-        p1Socket.emit('matchFound', payload);
-        p2Socket.emit('matchFound', payload);
+    socket.on('requestRoomList', () => {
+        sendRoomList(socket);
     });
 
-    socket.on('leaveQueue', () => {
-        if (waitingPlayer && waitingPlayer.socketId === socket.id) {
-            waitingPlayer = null;
+    socket.on('createRoom', data => {
+        if (socket.data.roomName) {
+            socket.emit('roomError', { message: 'leave your room first' });
+            return;
         }
+
+        const roomName = makeRoomName();
+        const password = data && typeof data.password === 'string' && data.password.trim()
+            ? data.password.trim()
+            : null;
+
+        rooms[roomName] = {
+            password,
+            creatorSocketId: socket.id,
+            players: [socket.id],
+            spectators: []
+        };
+
+        socket.join(roomName);
+        socket.data.roomName = roomName;
+        socket.data.roomRole = 'player';
+        socket.data.isPlaying = false;
+
+        socket.emit('roomCreated', {
+            roomName,
+            passwordProtected: !!password,
+            creatorSocketId: socket.id,
+            isCreator: true
+        });
+
+        sendRoomState(roomName);
+        sendRoomList();
+    });
+
+    socket.on('joinRoom', data => {
+        if (socket.data.roomName) {
+            socket.emit('roomError', { message: 'leave your room first' });
+            return;
+        }
+
+        const roomName = data && typeof data.roomName === 'string' ? data.roomName.trim() : '';
+        const password = data && typeof data.password === 'string' ? data.password : '';
+        const room = rooms[roomName];
+
+        if (!room) {
+            socket.emit('roomError', { message: 'room not found' });
+            return;
+        }
+
+        if (room.password && room.password !== password) {
+            socket.emit('roomError', { message: 'wrong password' });
+            return;
+        }
+
+        const role = room.players.length < 2 ? 'player' : 'spectator';
+        if (role === 'player') {
+            room.players.push(socket.id);
+        } else {
+            room.spectators.push(socket.id);
+        }
+
+        socket.join(roomName);
+        socket.data.roomName = roomName;
+        socket.data.roomRole = role;
+        socket.data.isPlaying = false;
+
+        socket.emit('roomJoined', {
+            roomName,
+            role,
+            creatorSocketId: room.creatorSocketId || null,
+            isCreator: room.creatorSocketId === socket.id
+        });
+
+        sendRoomState(roomName);
+        sendRoomList();
+    });
+
+    socket.on('spectateRoom', data => {
+        if (socket.data.roomName) {
+            socket.emit('roomError', { message: 'leave your room first' });
+            return;
+        }
+
+        const roomName = data && typeof data.roomName === 'string' ? data.roomName.trim() : '';
+        const password = data && typeof data.password === 'string' ? data.password : '';
+        const room = rooms[roomName];
+
+        if (!room) {
+            socket.emit('roomError', { message: 'room not found' });
+            return;
+        }
+
+        if (room.password && room.password !== password) {
+            socket.emit('roomError', { message: 'wrong password' });
+            return;
+        }
+
+        room.spectators.push(socket.id);
+        socket.join(roomName);
+        socket.data.roomName = roomName;
+        socket.data.roomRole = 'spectator';
+        socket.data.isPlaying = false;
+
+        socket.emit('roomJoined', {
+            roomName,
+            role: 'spectator',
+            creatorSocketId: room.creatorSocketId || null,
+            isCreator: false
+        });
+
+        sendRoomState(roomName);
+        sendRoomList();
+    });
+
+    socket.on('leaveRoom', () => {
+        removeSocketFromRoom(socket);
+    });
+
+    socket.on('startGame', () => {
+        const roomName = socket.data.roomName;
+        if (!roomName || socket.data.roomRole !== 'player' || !rooms[roomName]) return;
+
+        const room = rooms[roomName];
+        if (room.creatorSocketId !== socket.id) {
+            socket.emit('roomError', { message: 'only the room creator can start' });
+            return;
+        }
+
+        if (room.players.length < 2) {
+            socket.emit('roomError', { message: 'need 2 players to start' });
+            return;
+        }
+
+        room.players.forEach(socketId => {
+            const playerSocket = io.sockets.sockets.get(socketId);
+            if (playerSocket) {
+                playerSocket.data.isPlaying = false;
+            }
+        });
+
+        io.to(roomName).emit('gameStart', {
+            roomName,
+            startedBy: socket.data.username
+        });
+    });
+
+    socket.on('playerReady', () => {
+        const roomName = socket.data.roomName;
+        if (!roomName || socket.data.roomRole !== 'player' || !rooms[roomName]) return;
+
+        socket.data.isPlaying = true;
+        io.to(roomName).emit('playerStarted', {
+            roomName,
+            userId: socket.data.userId,
+            username: socket.data.username
+        });
+    });
+
+    socket.on('stateUpdate', data => {
+        const roomName = socket.data.roomName;
+        if (!roomName || socket.data.roomRole !== 'player' || !rooms[roomName]) return;
+
+        const payload = {
+            roomName,
+            userId: socket.data.userId,
+            username: socket.data.username,
+            board: Array.isArray(data && data.board) ? data.board : [],
+            score: Number(data && data.score) || 0,
+            level: Number(data && data.level) || 1,
+            lines: Number(data && data.lines) || 0,
+            gameOver: !!(data && data.gameOver)
+        };
+
+        sendToSpectators(roomName, 'spectatorState', payload);
+        sendToOtherPlayers(roomName, socket.id, 'opponentState', payload);
     });
 
     socket.on('clearLines', data => {
-        const roomId = socket.data.roomId;
-        if (!roomId || !matches[roomId]) return;
+        const roomName = socket.data.roomName;
+        if (!roomName || socket.data.roomRole !== 'player' || !rooms[roomName]) return;
 
         const lines = Number(data && data.lines);
         const garbage = Math.max(0, lines - 1);
         if (garbage <= 0) return;
 
-        const match = matches[roomId];
-        const otherPlayer = match.p1.socketId === socket.id ? match.p2 : match.p1;
-        const otherSocket = io.sockets.sockets.get(otherPlayer.socketId);
-        if (!otherSocket) return;
-
-        otherSocket.emit('garbage', { lines: garbage });
+        sendToOtherPlayers(roomName, socket.id, 'garbage', { lines: garbage });
+        sendToSpectators(roomName, 'roomMessage', {
+            roomName,
+            message: `${socket.data.username} sent ${garbage} garbage`
+        });
     });
 
     socket.on('gameOver', () => {
-        const roomId = socket.data.roomId;
-        if (!roomId || !matches[roomId]) return;
+        const roomName = socket.data.roomName;
+        if (!roomName || socket.data.roomRole !== 'player' || !rooms[roomName]) return;
 
-        const match = matches[roomId];
-        const otherPlayer = match.p1.socketId === socket.id ? match.p2 : match.p1;
-        const otherSocket = io.sockets.sockets.get(otherPlayer.socketId);
+        socket.data.isPlaying = false;
 
-        if (otherSocket) {
-            otherSocket.emit('opponentWin', { roomId });
-            otherSocket.data.roomId = null;
-        }
-
-        socket.data.roomId = null;
-        delete matches[roomId];
+        sendToOtherPlayers(roomName, socket.id, 'opponentWin', { roomName });
+        sendToSpectators(roomName, 'roomMessage', {
+            roomName,
+            message: `${socket.data.username} lost`
+        });
+        sendToSpectators(roomName, 'spectatorState', {
+            roomName,
+            userId: socket.data.userId,
+            username: socket.data.username,
+            board: [],
+            score: 0,
+            level: 1,
+            lines: 0,
+            gameOver: true
+        });
     });
 
     socket.on('disconnect', () => {
-        if (waitingPlayer && waitingPlayer.socketId === socket.id) {
-            waitingPlayer = null;
-        }
-
-        removeSocketFromMatch(socket);
+        removeSocketFromRoom(socket);
     });
 });
 

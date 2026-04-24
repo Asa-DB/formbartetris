@@ -3,246 +3,1189 @@
 
 <head>
   <meta charset="UTF-8">
-  <title>Tetris - Waifu Edition</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tetris</title>
 
   <style>
-    /* maybe add themes later */
+    @font-face {
+      font-family: "Nes";
+      src: url("/nintendo-nes-font.otf") format("opentype");
+      font-display: swap;
+    }
+
+    :root {
+      --bg: #08111a;
+      --screen: #0e1a24;
+      --panel: #172531;
+      --panel-alt: #223543;
+      --frame: #314955;
+      --frame-dark: #071017;
+      --text: #f3f6ea;
+      --muted: #9eb2a6;
+      --accent: #49f2b8;
+      --accent-dark: #12382b;
+      --warning: #f5b042;
+      --danger: #ff6b6b;
+      --shadow: #020406;
+      --shell-pad: clamp(10px, 1.5vh, 16px);
+      --panel-pad: clamp(9px, 1.2vh, 14px);
+      --stack-gap: clamp(8px, 1.2vh, 14px);
+      --tight-gap: clamp(6px, 0.9vh, 10px);
+    }
+
+    html,
     body {
-      background: #202028;
-      color: #fff;
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      height: 100%;
+    }
+
+    * {
+      box-sizing: border-box;
+      image-rendering: pixelated;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100dvh;
+      height: 100dvh;
+      padding: 8px 10px;
+      overflow: hidden;
+      color: var(--text);
+      font-family: "Nes", monospace;
+      user-select: none;
+      background: var(--bg);
       display: flex;
       justify-content: center;
       align-items: center;
-      height: 100vh;
-      margin: 0;
-      overflow: hidden;
-      user-select: none;
-    }
-
-    .game-container {
-      display: flex;
-      gap: 20px;
-      position: relative;
+      line-height: 1.6;
     }
 
     canvas {
-      background: #000;
-      border: 2px solid #333;
-      box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+      display: block;
+      background: #050b10;
+      image-rendering: pixelated;
     }
 
-    #companion-area {
-      position: absolute;
-      left: -180px;
-      bottom: 20px;
-      width: 150px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
-
-    #companion-gif {
-      width: 140px;
-      height: auto;
-      filter: drop-shadow(0 0 10px rgba(0, 0, 0, 0.5));
-    }
-
-    #speech-bubble {
-      background: #fff;
-      color: #000;
-      padding: 8px 12px;
-      border-radius: 15px;
-      font-size: 0.8rem;
-      font-weight: bold;
-      margin-bottom: 10px;
+    .app-shell {
+      width: min(1080px, 100%);
+      max-height: calc(100dvh - 16px);
       position: relative;
-      opacity: 0;
-      transform: translateY(10px);
-      transition: 0.3s;
-      text-align: center;
-      min-width: 110px;
-      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
-    }
-
-    #speech-bubble:after {
-      content: '';
-      position: absolute;
-      bottom: -8px;
-      left: 50%;
-      transform: translateX(-50%);
-      border-width: 8px 8px 0;
-      border-style: solid;
-      border-color: #fff transparent;
-    }
-
-    .ui-panel {
+      border: 4px solid var(--frame);
+      background: var(--frame-dark);
+      box-shadow: 0 0 0 4px #000;
+      padding: var(--shell-pad);
       display: flex;
       flex-direction: column;
-      min-width: 100px;
+      transform: scale(var(--app-scale, 1));
+      transform-origin: center center;
+      transition: transform 120ms ease-out;
     }
 
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: stretch;
+      gap: var(--stack-gap);
+      margin-bottom: var(--stack-gap);
+      flex-shrink: 0;
+    }
+
+    .title-block h1 {
+      margin: 0;
+      font-size: clamp(1.4rem, 3vw, 2.3rem);
+      letter-spacing: 0.08em;
+      line-height: 1.3;
+      color: var(--accent);
+      text-shadow: 3px 3px 0 #000;
+    }
+
+    .title-block p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 0.72rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .top-status {
+      min-width: min(350px, 100%);
+      padding: 10px 12px;
+      border: 4px solid var(--frame);
+      background: var(--panel);
+      box-shadow: inset -4px -4px 0 #0d171e;
+      text-align: left;
+    }
+
+    .top-status-label {
+      color: var(--muted);
+      font-size: 0.62rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    #room-info {
+      font-size: 0.72rem;
+      line-height: 1.7;
+      word-break: break-word;
+      color: var(--accent);
+    }
+
+    .game-layout {
+      display: grid;
+      grid-template-columns: 200px minmax(220px, 1fr) 200px;
+      gap: var(--stack-gap);
+      align-items: start;
+      flex: 1;
+      min-height: 0;
+    }
+
+    .ui-panel,
+    .side-panel {
+      display: flex;
+      flex-direction: column;
+      gap: var(--stack-gap);
+    }
+
+    .side-card,
+    .preview-box,
+    #remote-wrap {
+      background: var(--panel);
+      border: 4px solid var(--frame);
+      box-shadow: inset -4px -4px 0 #0d171e;
+    }
+
+    .side-card {
+      padding: var(--panel-pad);
+    }
+
+    .panel-title,
     .stat-label {
-      font-size: 0.8rem;
-      color: #888;
-      margin-top: 15px;
-      margin-bottom: 5px;
+      margin: 0 0 var(--tight-gap);
+      color: var(--muted);
+      font-size: 0.62rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .stats-stack {
+      display: flex;
+      flex-direction: column;
+      gap: var(--tight-gap);
+    }
+
+    .stat-box {
+      padding: 10px;
+      border: 3px solid var(--frame);
+      background: var(--panel-alt);
+      box-shadow: inset -3px -3px 0 #17242d;
     }
 
     .stat-value {
-      font-size: 1.2rem;
-      font-weight: bold;
+      font-size: 1rem;
+      line-height: 1.4;
+      color: var(--accent);
+    }
+
+    .status-panel-card .status-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+      width: 100%;
+    }
+
+    .status-panel-card .status-item {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      align-items: flex-start;
+      justify-content: center;
+      min-height: 0;
+      width: 100%;
+      padding: 7px 8px 6px;
+      border: 3px solid var(--frame);
+      background: var(--panel-alt);
+      font-size: 0.6rem;
+    }
+
+    .status-panel-card .status-key {
+      color: var(--muted);
+      font-size: 0.58rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      line-height: 1.2;
+      white-space: nowrap;
+    }
+
+    .status-panel-card .status-value {
+      display: block;
+      min-width: 0;
+      margin: 0;
+      text-align: left;
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      hyphens: none;
+    }
+
+    .status-panel-card #watch-label {
+      margin-bottom: 0;
+    }
+
+    .status-panel-card .status-list.single-stat {
+      grid-template-columns: 1fr;
+    }
+
+    .controls-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .controls-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 9px 10px;
+      border: 3px solid var(--frame);
+      background: #0d171e;
+    }
+
+    .controls-action {
+      color: var(--muted);
+      font-size: 0.58rem;
+      line-height: 1.6;
+    }
+
+    .controls-key {
+      flex-shrink: 0;
+      min-width: 72px;
+      padding: 5px 8px;
+      border: 3px solid var(--frame);
+      background: var(--panel-alt);
+      color: var(--accent);
+      font-size: 0.56rem;
+      text-align: center;
+      text-transform: uppercase;
+      box-shadow: inset -3px -3px 0 #17242d;
+    }
+
+    .center-stage {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: var(--stack-gap);
+      min-width: 0;
+    }
+
+    .playfield-row {
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      gap: var(--stack-gap);
+      min-width: 0;
+    }
+
+    .board-frame {
+      width: min(100%, 340px);
+      max-width: 340px;
+      flex: 0 1 340px;
+      padding: 10px;
+      border: 4px solid var(--frame);
+      background: #13212c;
+      box-shadow:
+        inset 0 0 0 4px #05080c,
+        inset -6px -6px 0 #0a1218;
+    }
+
+    .board-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 8px;
+      padding: 0 2px;
+    }
+
+    .board-title {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .board-title strong {
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .board-title span {
+      color: var(--muted);
+      font-size: 0.58rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    #matchmaking-status {
+      padding: 6px 8px;
+      border: 3px solid var(--accent-dark);
+      background: #0f231d;
+      color: var(--accent);
+      font-size: 0.56rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      text-align: right;
+      max-width: 140px;
+      line-height: 1.6;
+    }
+
+    .board-canvas-shell {
+      position: relative;
+      padding: 8px;
+      background: #0b131a;
+      border: 4px solid var(--frame);
+      box-shadow: inset 0 0 0 4px #05080c;
+    }
+
+    #tetris {
+      width: min(100%, clamp(180px, 31vh, 240px));
+      height: auto;
+      margin: 0 auto;
+      border: 4px solid #314955;
+      background: #050b10;
+    }
+
+    #companion-area {
+      width: 100%;
+      max-width: 340px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px;
+      border: 4px solid var(--frame);
+      background: var(--panel);
+      box-shadow: inset -4px -4px 0 #0d171e;
+    }
+
+    #companion-gif {
+      width: 58px;
+      height: 58px;
+      object-fit: contain;
+      flex-shrink: 0;
+      border: 3px solid var(--frame);
+      background: #0a1117;
+      padding: 4px;
+    }
+
+    .companion-copy {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .companion-copy strong {
+      font-size: 0.6rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    #speech-bubble {
+      min-height: 36px;
+      padding: 8px 10px;
+      background: #0d171e;
+      border: 3px solid var(--frame);
+      font-size: 0.58rem;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 220ms ease, transform 220ms ease;
+      line-height: 1.7;
+    }
+
+    .preview-box,
+    #remote-wrap {
+      padding: var(--panel-pad);
+    }
+
+    #remote-wrap {
+      width: 160px;
+      flex: 0 0 160px;
+      box-sizing: border-box;
+    }
+
+    .preview-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .preview-note {
+      color: var(--muted);
+      font-size: 0.56rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
     }
 
     .mini-canvas {
-      border: 1px solid #444;
-      background: #111;
-      margin-bottom: 5px;
+      margin: 0 auto;
+      border: 3px solid var(--frame);
+      background: #050b10;
+      width: auto;
+      max-width: 100%;
+    }
+
+    #watch-label {
+      color: var(--text);
+      font-size: 0.6rem;
+      line-height: 1.4;
+      margin-bottom: 8px;
+    }
+
+    #watching-line {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 0.56rem;
+      line-height: 1.45;
     }
 
     #overlay {
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0, 0, 0, 0.92);
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+      background: rgba(3, 7, 11, 0.9);
+    }
+
+    .menu-card {
+      width: min(520px, 100%);
+      max-height: min(88vh, 760px);
+      overflow-y: auto;
+      padding: 18px;
+      border: 4px solid var(--frame);
+      background: #13212c;
+      box-shadow: 0 0 0 4px #000;
+    }
+
+    .menu-card h1,
+    .menu-card h3 {
+      margin: 0;
+    }
+
+    .hero-title {
       display: flex;
       flex-direction: column;
-      justify-content: center;
-      align-items: center;
-      z-index: 10;
-      text-align: center;
-      padding: 20px;
+      gap: 7px;
+      margin-bottom: 14px;
+      text-align: left;
     }
 
-    .btn {
-      padding: 12px 24px;
-      background: #fff;
-      color: #000;
-      border: none;
+    .hero-title h1 {
+      font-size: clamp(1.4rem, 4vw, 2.2rem);
+      letter-spacing: 0.1em;
+      line-height: 1.3;
+      color: var(--accent);
+      text-shadow: 3px 3px 0 #000;
+    }
+
+    .hero-title p {
+      margin: 0;
+      color: var(--warning);
+      font-size: 0.58rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+
+    .menu-summary {
+      margin-bottom: 14px;
+      padding: 14px;
+      border: 4px solid var(--frame);
+      background: #0d171e;
+    }
+
+    .room-text {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 0.58rem;
+      line-height: 1.8;
+      word-break: break-word;
+    }
+
+    .menu-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .btn,
+    .tiny-btn {
+      appearance: none;
+      border: 3px solid #000;
+      padding: 11px 12px;
+      background: var(--accent);
+      color: #04110c;
+      font-family: "Nes", monospace;
+      font-size: 0.6rem;
+      letter-spacing: 0.04em;
       cursor: pointer;
-      font-weight: bold;
-      font-size: 1rem;
-      margin-bottom: 10px;
-      width: 240px;
+      box-shadow: inset -3px -3px 0 rgba(0, 0, 0, 0.28);
     }
 
-    .btn.secondary {
-      background: #444;
-      color: #fff;
+    .btn:hover,
+    .tiny-btn:hover {
+      background: #67f7c4;
+    }
+
+    .btn.secondary,
+    .tiny-btn.dark {
+      background: #2b404e;
+      color: var(--text);
+      border-color: #000;
+    }
+
+    #primary-btn,
+    #start-room-btn,
+    #restart-btn {
+      width: 100%;
+    }
+
+    .menu-section {
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 4px solid var(--frame);
+    }
+
+    .section-heading {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 12px;
+      text-align: left;
+    }
+
+    .section-heading strong {
+      font-size: 0.62rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .section-heading span {
+      color: var(--muted);
+      font-size: 0.58rem;
+      line-height: 1.8;
+    }
+
+    #online-panel {
+      display: none;
+      margin-top: 14px;
+      padding: 14px;
+      border: 4px solid var(--frame);
+      background: #0d171e;
+      text-align: left;
+    }
+
+    .room-browser-top {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .tiny-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .tiny-row .input {
+      flex: 1;
+      margin: 0;
+    }
+
+    .input,
+    input[type="range"] {
+      width: 100%;
+    }
+
+    .input {
+      padding: 10px 12px;
+      border: 3px solid var(--frame);
+      background: #08111a;
+      color: var(--text);
+      font-family: "Nes", monospace;
+      font-size: 0.58rem;
+      outline: none;
+    }
+
+    .input:focus {
+      border-color: var(--accent);
+    }
+
+    #room-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 220px;
+      overflow-y: auto;
+      margin-top: 10px;
+      padding-right: 4px;
+    }
+
+    .room-card {
+      padding: 12px;
+      border: 3px solid var(--frame);
+      background: var(--panel-alt);
+      cursor: pointer;
+    }
+
+    .room-card:hover {
+      border-color: var(--accent);
+    }
+
+    .room-card.selected {
+      border-color: var(--warning);
+      background: #3a2d16;
+    }
+
+    .room-card-top,
+    .room-card-bottom {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .room-card-top {
+      margin-bottom: 8px;
+      font-size: 0.58rem;
+      color: var(--accent);
+    }
+
+    .room-card-bottom {
+      color: var(--muted);
+      font-size: 0.52rem;
+      line-height: 1.6;
+    }
+
+    .room-empty {
+      padding: 16px 14px;
+      border: 3px dashed var(--frame);
+      color: var(--muted);
+      text-align: center;
+      font-size: 0.58rem;
     }
 
     #settings-panel,
     #companion-panel {
       display: none;
       flex-direction: column;
-      gap: 10px;
+      gap: 14px;
       text-align: left;
-      width: 320px;
-      max-height: 80vh;
-      overflow-y: auto;
-      padding: 10px;
     }
 
     .companion-item {
-      background: #333;
-      padding: 12px;
       display: flex;
       justify-content: space-between;
+      gap: 12px;
       align-items: center;
-      border-left: 4px solid transparent;
+      padding: 12px 14px;
+      border: 3px solid var(--frame);
+      background: var(--panel-alt);
       cursor: pointer;
-      margin-bottom: 5px;
     }
 
     .companion-item.active {
-      border-color: #ff0d72;
-      background: #444;
+      border-color: var(--accent);
+      background: #1c3a31;
     }
 
     .setting-item {
       display: flex;
       justify-content: space-between;
+      gap: 12px;
       align-items: center;
-      margin-bottom: 8px;
+    }
+
+    .setting-item.ui-scale-setting {
+      align-items: center;
+      gap: 10px;
+    }
+
+    .ui-scale-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .ui-scale-value {
+      min-width: 52px;
+      text-align: center;
+      color: var(--accent);
+      font-size: 0.6rem;
+    }
+
+    .scale-btn {
+      min-width: 34px;
+      padding: 8px 10px;
+      line-height: 1;
     }
 
     label {
-      font-size: 0.7rem;
-      color: #aaa;
+      color: var(--muted);
+      font-size: 0.56rem;
+      letter-spacing: 0.08em;
       text-transform: uppercase;
+      line-height: 1.6;
     }
 
     .color-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 5px;
+      gap: 8px;
+    }
+
+    .settings-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    hr {
+      border: 0;
+      border-top: 3px solid var(--frame);
+      margin: 2px 0;
+    }
+
+    @media (max-width: 1020px) {
+      .game-layout {
+        grid-template-columns: minmax(170px, 1fr) minmax(220px, 300px) minmax(170px, 1fr);
+        gap: 12px;
+      }
+    }
+
+    @media (max-height: 900px) {
+      body {
+        padding: 6px 8px;
+      }
+
+      .app-shell {
+        max-height: calc(100dvh - 12px);
+      }
+
+      .title-block h1 {
+        font-size: clamp(1.2rem, 2.4vw, 1.8rem);
+      }
+
+      .title-block p,
+      #room-info,
+      .board-title strong,
+      .board-title span,
+      #matchmaking-status,
+      .panel-title,
+      .stat-label,
+      .preview-note,
+      .status-item,
+      .companion-copy strong,
+      #speech-bubble,
+      #watch-label,
+      #watching-line {
+        font-size: 0.52rem;
+      }
+
+      .stat-value {
+        font-size: 0.86rem;
+      }
+
+      .game-layout {
+        grid-template-columns: 180px minmax(210px, 1fr) 180px;
+      }
+    }
+
+    @media (max-height: 780px) {
+      .game-layout {
+        grid-template-columns: 165px minmax(200px, 1fr) 165px;
+      }
+
+      .board-frame,
+      #companion-area {
+        max-width: 312px;
+      }
+
+      #tetris {
+        width: min(100%, 170px);
+      }
+
+      #remote-board {
+        width: 100px;
+        height: auto;
+      }
+
+      .mini-canvas {
+        transform-origin: top center;
+      }
+    }
+
+    @media (max-width: 860px) {
+      body {
+        min-height: auto;
+        height: auto;
+        padding: 18px 12px 26px;
+        overflow-y: auto;
+        overflow-x: hidden;
+        align-items: flex-start;
+      }
+
+      .app-shell {
+        max-height: none;
+      }
+
+      .topbar {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .top-status {
+        min-width: 0;
+        text-align: left;
+      }
+
+      .game-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .ui-panel,
+      .side-panel,
+      .center-stage {
+        max-width: 360px;
+        width: 100%;
+        margin: 0 auto;
+      }
+
+      .ui-panel {
+        order: 2;
+      }
+
+      .center-stage {
+        order: 1;
+      }
+
+      .side-panel {
+        order: 3;
+      }
+
+      .playfield-row {
+        flex-direction: column;
+        align-items: center;
+      }
+
+      #remote-wrap {
+        width: 100%;
+        max-width: 340px;
+        flex: none;
+      }
+    }
+
+    @media (max-width: 520px) {
+      body {
+        padding: 12px 10px 20px;
+      }
+
+      .board-frame,
+      .menu-card,
+      .side-card,
+      .preview-box,
+      #remote-wrap,
+      #companion-area {
+        padding-left: 12px;
+        padding-right: 12px;
+      }
+
+      .board-frame {
+        padding: 14px;
+      }
+
+      #tetris {
+        width: min(100%, 222px);
+      }
+
+      #companion-area {
+        align-items: flex-start;
+      }
+
+      #companion-gif {
+        width: 68px;
+        height: 68px;
+      }
+
+      .tiny-row,
+      .settings-actions {
+        grid-template-columns: 1fr;
+        display: grid;
+      }
+
+      .tiny-btn {
+        width: 100%;
+      }
+
+      .room-card-top,
+      .room-card-bottom {
+        flex-direction: column;
+        align-items: flex-start;
+      }
     }
   </style>
 </head>
 
 <body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="title-block">
+        <h1>TETRIS</h1>
+        <p>Online</p>
+      </div>
+      <div class="top-status">
+        <div class="top-status-label">Current Room</div>
+        <div id="room-info">Singleplayer only</div>
+      </div>
+    </header>
 
-  <div class="game-container">
-    <div id="companion-area">
-      <div id="speech-bubble">I lubb uu!</div>
-      <img id="companion-gif" src="fl_chan.gif" alt="">
+    <main class="game-layout">
+      <aside class="ui-panel">
+        <section class="side-card">
+          <h2 class="panel-title">Run Stats</h2>
+          <div class="stats-stack">
+            <div class="stat-box">
+              <div class="stat-label">Score</div>
+              <div id="score" class="stat-value">0</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-label">Lines</div>
+              <div id="lines" class="stat-value">0</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-label">Level</div>
+              <div id="level" class="stat-value">1</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-label">Combo</div>
+              <div id="combo" class="stat-value">-</div>
+            </div>
+          </div>
+        </section>
+      </aside>
+
+      <section class="center-stage">
+        <div class="playfield-row">
+          <div class="board-frame">
+            <div class="board-head">
+            <div class="board-title">
+                <strong>Game</strong>
+                <span>Solo / Versus / Watch</span>
+              </div>
+              <div id="matchmaking-status">singleplayer ready</div>
+            </div>
+            <div class="board-canvas-shell">
+              <canvas id="tetris" width="240" height="400"></canvas>
+            </div>
+          </div>
+
+          <section id="remote-wrap">
+            <div class="preview-header">
+              <div class="stat-label">Live Feed</div>
+            </div>
+            <canvas id="remote-board" class="mini-canvas" width="120" height="200"></canvas>
+            <div id="watching-line" style="display:none;">Watching only</div>
+          </section>
+        </div>
+
+        <div id="companion-area">
+          <img id="companion-gif" src="fl_chan.gif" alt="">
+          <div class="companion-copy">
+            <strong>Mascot Channel</strong>
+            <div id="speech-bubble">I lubb uu!</div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="side-panel">
+        <section class="preview-box">
+          <div class="preview-header">
+            <div class="stat-label">Next Pieces</div>
+            <div class="preview-note">2 preview</div>
+          </div>
+          <canvas id="next" class="mini-canvas" width="80" height="120"></canvas>
+        </section>
+
+        <section class="preview-box">
+          <div class="preview-header">
+            <div class="stat-label">Hold Piece</div>
+            <div class="preview-note">Press C</div>
+          </div>
+          <canvas id="hold" class="mini-canvas" width="80" height="80"></canvas>
+        </section>
+
+        <section class="side-card status-panel-card">
+          <h2 class="panel-title">B2B</h2>
+          <div class="status-list single-stat">
+            <div class="status-item">
+              <strong class="status-key">B2B</strong>
+              <span id="b2b" class="status-value">-</span>
+            </div>
+          </div>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <div id="overlay">
+    <div id="main-menu-panel" class="menu-card" style="display:flex; flex-direction:column;">
+      <div class="hero-title">
+        <h1>TETRIS</h1>
+        <p>Main Menu</p>
+      </div>
+
+      <div class="menu-summary">
+        <div class="top-status-label">Session</div>
+        <div id="matchmaking-status-panel-copy" style="display:none;"></div>
+        <div id="room-info-menu" class="room-text">Singleplayer only</div>
+      </div>
+
+      <div class="menu-actions">
+        <button id="primary-btn" class="btn" onclick="chooseSingleplayer()">Play Singleplayer</button>
+        <button id="start-room-btn" class="btn" style="display:none;" onclick="requestRoomStart()">Start Game</button>
+        <button id="online-btn" class="btn secondary" onclick="openOnlineMenu()">Play Online</button>
+        <button id="restart-btn" class="btn secondary" style="display:none;" onclick="window.location.href='/'">Restart Game</button>
+      </div>
+
+      <section class="menu-section">
+        <div class="section-heading">
+          <strong>Options</strong>
+          <span>Change mascots, audio, and colors.</span>
+        </div>
+        <div class="menu-actions">
+          <button class="btn secondary" onclick="openPanel('companion-panel')">Mascots</button>
+          <button class="btn secondary" onclick="openPanel('settings-panel')">Audio & Colors</button>
+        </div>
+      </section>
+
+      <div id="online-panel">
+        <div class="section-heading">
+          <strong>Lobby</strong>
+          <span>Create a room, join a room, or watch a match.</span>
+        </div>
+
+        <div class="room-browser-top">
+          <label for="room-password">Room Lock Code</label>
+          <div class="tiny-row">
+            <input id="room-password" class="input" type="password" placeholder="blank = open room">
+            <button class="tiny-btn" onclick="createRoomClicked()">Create Room</button>
+          </div>
+        </div>
+
+        <div class="section-heading" style="margin-bottom:8px;">
+          <strong>Active Rooms</strong>
+          <span>Select a room to join. Full rooms can be watched.</span>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+          <div style="color:var(--muted); font-size:0.56rem;">Live room list</div>
+          <button class="tiny-btn dark" onclick="refreshRoomList()">Refresh</button>
+        </div>
+
+        <div id="room-list">
+          <div class="room-empty">No active rooms on the board</div>
+        </div>
+
+        <div class="menu-actions" style="margin-top:14px;">
+          <button class="btn secondary" onclick="closeOnlineMenu()">Back</button>
+        </div>
+      </div>
+
+      <section class="menu-section">
+        <div class="section-heading">
+          <strong>Controls</strong>
+          <span>Full keyboard layout for gameplay.</span>
+        </div>
+        <div class="controls-list">
+          <div class="controls-item">
+            <span class="controls-action">Move left</span>
+            <span class="controls-key">Left Arrow</span>
+          </div>
+          <div class="controls-item">
+            <span class="controls-action">Move right</span>
+            <span class="controls-key">Right Arrow</span>
+          </div>
+          <div class="controls-item">
+            <span class="controls-action">Soft drop</span>
+            <span class="controls-key">Down Arrow</span>
+          </div>
+          <div class="controls-item">
+            <span class="controls-action">Rotate clockwise</span>
+            <span class="controls-key">Up Arrow</span>
+          </div>
+          <div class="controls-item">
+            <span class="controls-action">Rotate counterclockwise</span>
+            <span class="controls-key">Z</span>
+          </div>
+          <div class="controls-item">
+            <span class="controls-action">Hard drop</span>
+            <span class="controls-key">Space</span>
+          </div>
+          <div class="controls-item">
+            <span class="controls-action">Hold piece</span>
+            <span class="controls-key">C</span>
+          </div>
+          <div class="controls-item">
+            <span class="controls-action">Pause or resume</span>
+            <span class="controls-key">P</span>
+          </div>
+        </div>
+      </section>
     </div>
 
-    <canvas id="tetris" width="240" height="400"></canvas>
-
-    <div class="ui-panel">
-      <div class="stat-label">SCORE</div>
-      <div id="score" class="stat-value">0</div>
-      <div class="stat-label">LEVEL</div>
-      <div id="level" class="stat-value">1</div>
-      <div class="stat-label">COMBO</div>
-      <div id="combo" class="stat-value">-</div>
-      <div class="stat-label">B2B</div>
-      <div id="b2b" class="stat-value">-</div>
-      <div class="stat-label">NEXT</div>
-      <canvas id="next" class="mini-canvas" width="80" height="280"></canvas>
-      <div class="stat-label">HOLD (C)</div>
-      <canvas id="hold" class="mini-canvas" width="80" height="80"></canvas>
+    <div id="companion-panel" class="menu-card">
+      <div class="section-heading" style="margin-bottom:14px;">
+        <strong>Select Mascot</strong>
+        <span>Choose a mascot.</span>
+      </div>
+      <div id="companion-list"></div>
+      <button class="btn secondary" style="margin-top:8px;" onclick="openPanel('main-menu-panel')">Back</button>
     </div>
 
-    <div id="overlay">
-      <div id="main-menu-panel" style="display:flex; flex-direction:column;">
-        <h1 style="margin: 0; font-size: 3rem;">TETRIS</h1>
-        <div style="color:#ff0d72; margin-bottom: 25px; font-weight: bold;">WAIFU EDITION</div>
-        <div id="matchmaking-status" style="color:#aaa; margin-bottom: 16px; font-size:0.85rem;">connecting...</div>
-        <button id="primary-btn" class="btn" onclick="handlePrimaryBtn()">START GAME</button>
-        <button id="restart-btn" class="btn secondary" style="display:none;" onclick="window.location.href='/'">RESTART GAME</button>
-        <button class="btn secondary" onclick="openPanel('companion-panel')">COMPANIONS</button>
-        <button class="btn secondary" onclick="openPanel('settings-panel')">SETTINGS & COLORS</button>
+    <div id="settings-panel" class="menu-card">
+      <div class="section-heading" style="margin-bottom:14px;">
+        <strong>Audio & Colors</strong>
+        <span>Adjust sound and piece colors.</span>
       </div>
-
-      <div id="companion-panel">
-        <h3 style="margin: 0 0 10px 0;">SELECT COMPANION</h3>
-        <div style="font-size:0.7rem; color:#aaa; margin-bottom:10px;">Pick your favorite waifu below</div>
-        <div id="companion-list"></div>
-        <button class="btn" style="margin-top:10px;" onclick="openPanel('main-menu-panel')">BACK</button>
-      </div>
-
-      <div id="settings-panel">
-        <h3>SETTINGSS</h3>
-        <div class="setting-item">
-          <label>Master Volume</label>
-          <input type="range" min="0" max="100" value="40" oninput="updateVolume(this.value)">
+      <div class="setting-item ui-scale-setting">
+        <label>UI Size</label>
+        <div class="ui-scale-controls">
+          <button class="btn secondary scale-btn" type="button" onclick="nudgeUiScale(-0.1)">-</button>
+          <div id="ui-scale-value" class="ui-scale-value">100%</div>
+          <button class="btn secondary scale-btn" type="button" onclick="nudgeUiScale(0.1)">+</button>
         </div>
-        <hr style="border: 0; border-top: 1px solid #444; margin: 10px 0;">
-        <label>Piece Colorz</label>
-        <div id="color-pickers" class="color-grid"></div>
-        <div style="display:flex; gap: 5px; margin-top: 10px;">
-          <button class="btn secondary" style="font-size:0.7rem; width:100%" onclick="exportColors()">SAVE
-            COLORS</button>
-          <button class="btn secondary" style="font-size:0.7rem; width:100%"
-            onclick="document.getElementById('import-file').click()">LOAD COLORS</button>
-        </div>
-        <input type="file" id="import-file" style="display:none" accept=".txt" onchange="importColors(this)">
-        <button class="btn" style="margin-top:20px;" onclick="openPanel('main-menu-panel')">BACK</button>
       </div>
+      <div class="setting-item">
+        <label>Master Volume</label>
+        <input type="range" min="0" max="100" value="40" oninput="updateVolume(this.value)">
+      </div>
+      <hr>
+      <label>Piece Colors</label>
+      <div id="color-pickers" class="color-grid"></div>
+      <div class="settings-actions">
+        <button class="btn secondary" style="font-size:0.56rem;" onclick="exportColors()">Save Colors</button>
+        <button class="btn secondary" style="font-size:0.56rem;" onclick="document.getElementById('import-file').click()">Load Colors</button>
+      </div>
+      <input type="file" id="import-file" style="display:none" accept=".txt" onchange="importColors(this)">
+      <button class="btn secondary" style="margin-top:8px;" onclick="openPanel('main-menu-panel')">Back</button>
     </div>
   </div>
 

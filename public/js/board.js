@@ -81,6 +81,7 @@ function collide(arena, player) {
 
 function updateScoreUi() {
   document.getElementById('score').innerText = player.score;
+  document.getElementById('lines').innerText = player.lines;
   document.getElementById('level').innerText = player.level;
   document.getElementById('combo').innerText = player.combo > 0 ? player.combo : '-';
   document.getElementById('b2b').innerText = player.backToBack > 0 ? player.backToBack : '-';
@@ -140,7 +141,7 @@ function arenaSweep() {
   dropInterval = Math.max(80, Math.pow(0.85, player.level - 1) * 1000);
   updateScoreUi();
 
-  if (socket && currentMatch) {
+  if (socket && currentRoom && gameMode === 'multiplayer' && playerRole === 'player') {
     socket.emit('clearLines', { lines: rowCount });
   }
 
