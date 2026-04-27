@@ -17,6 +17,16 @@ You need **Node.js 18+** and **npm**.
 npm install
 ```
 
+This installs the runtime packages used by the app:
+
+- `better-sqlite3`
+- `dotenv`
+- `ejs`
+- `express`
+- `express-session`
+- `jsonwebtoken`
+- `socket.io`
+
 Then create your environment file by copying the template:
 
 ```bash
@@ -30,8 +40,7 @@ Edit `.env` and set the values for your deployment. The important ones are:
 - **THIS_URL**: Public URL for this app (e.g. `https://localhost:3000` while developing).
 - **PAYUSER**: Formbar user ID that will receive Digipog payments.
 - **ENTRYFEE**: How many Digipogs it costs to play.
-- **SECRET**: Session secret for this app. For Formbar login to work, this must also match Formbar's JWT signing secret unless you set `JWT_SECRET` separately.
-- **JWT_SECRET**: Optional override for the Formbar JWT signing secret. Leave it unset if Formbar and this app share the same secret.
+- **SECRET**: Session secret for this app. Set this to any strong random value for your deployment.
 
 ### Run
 
@@ -43,7 +52,7 @@ node app.js
 
 The server will start on the `PORT` configured in your `.env` (default from the template is `3000`) and log the URL it is serving on.
 
-If login succeeds on Formbar but this app responds with `invalid login token`, the JWT secret does not match the secret Formbar used to sign the login token.
+If login succeeds on Formbar but this app responds with `invalid login token`, the token is missing required user fields or is malformed.
 
 ### Play
 

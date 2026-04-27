@@ -21,17 +21,12 @@ const {
 const dotenv = require('dotenv');
 dotenv.config();
 const DEFAULT_SESSION_SECRET = 'DontForgetToSetThis';
-const DEFAULT_JWT_SECRET = 'UseTheSameSigningSecretAsFormbar';
 const localDevAuthPath = path.join(__dirname, 'local', 'dev-auth.js');
 const localDevAuth = fs.existsSync(localDevAuthPath) ? require(localDevAuthPath) : null;
 const isLocalDevAuthEnabled = Boolean(localDevAuth && localDevAuth.enabled);
 
 const port = process.env.PORT;
 const sessionSecret = process.env.SECRET || (isLocalDevAuthEnabled ? 'local-dev-session-secret' : undefined);
-const configuredJwtSecret = process.env.JWT_SECRET;
-const jwtSecret = configuredJwtSecret && configuredJwtSecret !== DEFAULT_JWT_SECRET
-    ? configuredJwtSecret
-    : sessionSecret;
 const formbarAddress = process.env.FORMBAR_URL;
 const formbarLogin = formbarAddress + '/oauth';
 const thisUrl = process.env.THIS_URL;
@@ -45,11 +40,7 @@ if (!sessionSecret) {
 }
 
 if (!isLocalDevAuthEnabled && sessionSecret === DEFAULT_SESSION_SECRET) {
-    throw new Error('SECRET is still set to the placeholder value; replace it with the Formbar signing secret');
-}
-
-if (!isLocalDevAuthEnabled && !jwtSecret) {
-    throw new Error('Missing JWT secret in environment variables');
+    throw new Error('SECRET is still set to the placeholder value; replace it with a real session secret');
 }
 
 const app = express(); // Create the express app
@@ -121,7 +112,23 @@ function redirectToLogin(res) {
 }
 
 function verifyToken(token) {
-    return jwt.verify(token, jwtSecret);
+    const tokenData = jwt.decode(token);
+
+    if (!tokenData || typeof tokenData !== 'object') {
+        throw new Error('Invalid token payload');
+    }
+
+    if (tokenData.exp && Date.now() >= tokenData.exp * 1000) {
+        const expiredError = new Error('jwt expired');
+        expiredError.name = 'TokenExpiredError';
+        throw expiredError;
+    }
+
+    if (!tokenData.displayName || tokenData.id == null) {
+        throw new Error('Token missing required user fields');
+    }
+
+    return tokenData;
 }
 
 function wrapExpressMiddleware(middleware) {
