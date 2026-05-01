@@ -350,9 +350,6 @@ function renderRoomList() {
     }
     card.onclick = () => {
       setSelectedRoom(room.roomName);
-      if (room.roomType !== 'tournament' && !room.passwordProtected && room.playerCount < 2) {
-        tryJoinRoom(room.roomName, false);
-      }
     };
 
     const isTournament = room.roomType === 'tournament';
@@ -373,10 +370,16 @@ function renderRoomList() {
         <span>${rightText}</span>
       </div>
       ${isTournament ? `<div class="room-card-bottom" style="margin-top:6px;"><span>entry ${room.entryFee}</span><span>pool ${room.prizePool}</span><span>${room.passwordProtected ? 'code' : 'open'}</span></div>` : ''}
-      <div style="display:flex; justify-content:flex-end; margin-top:6px;">
+      <div style="display:flex; justify-content:flex-end; gap:6px; margin-top:6px;">
+        <button class="tiny-btn room-join-btn">JOIN</button>
         <button class="tiny-btn dark room-spectate-btn">WATCH</button>
       </div>
     `;
+    card.querySelector('.room-join-btn').onclick = e => {
+      e.stopPropagation();
+      setSelectedRoom(room.roomName);
+      tryJoinRoom(room.roomName, false);
+    };
     card.querySelector('.room-spectate-btn').onclick = e => {
       e.stopPropagation();
       setSelectedRoom(room.roomName);
