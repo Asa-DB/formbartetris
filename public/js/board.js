@@ -141,7 +141,7 @@ function arenaSweep() {
   dropInterval = Math.max(80, Math.pow(0.85, player.level - 1) * 1000);
   updateScoreUi();
 
-  if (socket && currentRoom && gameMode === 'multiplayer' && playerRole === 'player') {
+  if (socket && currentRoom && playerRole === 'player' && (gameMode === 'multiplayer' || gameMode === 'tournament')) {
     socket.emit('clearLines', { lines: rowCount });
   }
 

@@ -15,8 +15,16 @@ const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
+function hasColumn(tableName, columnName) {
+    return db.prepare(`PRAGMA table_info(${tableName})`).all().some(column => column.name === columnName);
+}
+
 function initDb() {
     db.exec(TABLES_SQL);
+
+    if (!hasColumn('tournaments', 'max_players')) {
+        db.exec('ALTER TABLE tournaments ADD COLUMN max_players INTEGER NOT NULL DEFAULT 8');
+    }
 }
 
 function saveUser(id, username, passwordHash = null) {

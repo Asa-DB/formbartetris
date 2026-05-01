@@ -543,11 +543,27 @@
       background: #67f7c4;
     }
 
+    .btn:disabled,
+    .tiny-btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
     .btn.secondary,
     .tiny-btn.dark {
       background: #2b404e;
       color: var(--text);
       border-color: #000;
+    }
+
+    .tiny-btn.danger {
+      background: #7a2e2e;
+      color: var(--text);
+      border-color: #000;
+    }
+
+    .tiny-btn.danger:hover {
+      background: #974040;
     }
 
     #primary-btn,
@@ -1129,6 +1145,8 @@
           <div id="tournament-create-fields" class="stack-fields" style="display:none;">
             <label for="tournament-entry-fee">Tournament Entry Fee</label>
             <input id="tournament-entry-fee" class="input" type="number" min="120" step="1" value="120">
+            <label for="tournament-max-players">Tournament Player Limit</label>
+            <input id="tournament-max-players" class="input" type="number" min="2" max="50" step="1" value="8">
             <label for="tournament-bonus">Bonus Pool Contribution</label>
             <input id="tournament-bonus" class="input" type="number" min="0" step="1" value="0">
             <label for="tournament-pin">Formbar PIN</label>
@@ -1165,6 +1183,16 @@
           </div>
           <div id="tournament-leaderboard" class="results-board">
             <div class="room-empty">No tournament data yet</div>
+          </div>
+          <div id="tournament-controls" class="stack-fields" style="display:none; margin-top:12px;">
+            <label for="tournament-max-players-live">Tournament Player Limit</label>
+            <div class="tiny-row">
+              <input id="tournament-max-players-live" class="input" type="number" min="2" max="50" step="1" value="8">
+              <button id="save-tournament-settings-btn" class="tiny-btn" onclick="updateTournamentSettings()">Update</button>
+            </div>
+            <div id="tournament-settings-hint" style="color:var(--muted); font-size:0.56rem; line-height:1.7;">
+              Open tournament only. Limit can be set from 2 to 50 players.
+            </div>
           </div>
         </div>
 

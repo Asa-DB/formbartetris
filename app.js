@@ -36,6 +36,8 @@ const payUserId = process.env.PAYUSER;
 const payUserPin = process.env.PAYUSER_PIN || '';
 const entryFee = process.env.ENTRYFEE;
 const MIN_TOURNAMENT_ENTRY_FEE = 120;
+const DEFAULT_TOURNAMENT_MAX_PLAYERS = 8;
+const MAX_TOURNAMENT_PLAYERS = 50;
 const isProduction = process.env.NODE_ENV === 'production';
 
 if (!sessionSecret) {
@@ -484,6 +486,8 @@ function getRoomInfo(roomName) {
         roomType: room.roomType || 'standard',
         passwordProtected: !!room.password,
         locked: !!room.locked,
+        ownerUserId: room.ownerUserId || null,
+        ownerUsername: room.ownerUsername || null,
         creatorSocketId: room.creatorSocketId || null,
         creatorUserId: room.creatorUserId || (creatorSocket ? creatorSocket.data.userId : null),
         creatorUsername: creatorSocket ? creatorSocket.data.username : room.creatorUsername || null,
@@ -516,7 +520,9 @@ function getRoomList() {
                 spectatorCount: room.spectators.length,
                 passwordProtected: !!room.password,
                 locked: !!room.locked,
+                ownerUserId: room.ownerUserId || null,
                 entryFee: tournament ? tournament.entryFee : null,
+                maxPlayers: tournament ? tournament.maxPlayers : null,
                 prizePool: tournament ? tournament.prizePool : null,
                 submittedPlayers: tournament ? tournament.submittedPlayers : null
             };
@@ -532,6 +538,28 @@ function sendRoomList(targetSocket) {
     io.emit('roomsList', getRoomList());
 }
 
+function closeRoom(roomName, message) {
+    const room = rooms[roomName];
+    if (!room) return;
+
+    [...room.players, ...room.spectators].forEach(socketId => {
+        const memberSocket = io.sockets.sockets.get(socketId);
+        if (!memberSocket) return;
+
+        memberSocket.leave(roomName);
+        memberSocket.data.roomName = null;
+        memberSocket.data.roomRole = null;
+        memberSocket.data.isPlaying = false;
+        memberSocket.emit('roomClosed', {
+            roomName,
+            message
+        });
+    });
+
+    delete rooms[roomName];
+    sendRoomList();
+}
+
 function removeSocketFromRoom(socket) {
     const roomName = socket.data.roomName;
     if (!roomName || !rooms[roomName]) return;
@@ -539,6 +567,7 @@ function removeSocketFromRoom(socket) {
     const room = rooms[roomName];
     const wasPlayer = room.players.includes(socket.id);
     const hadOpponent = room.players.some(id => id !== socket.id);
+    const wasTournamentPlayer = isTournamentRoom(room) && wasPlayer && socket.data.isPlaying;
 
     if (!isTournamentRoom(room) && wasPlayer && socket.data.isPlaying && hadOpponent) {
         sendToOtherPlayers(roomName, socket.id, 'opponentWin', { roomName });
@@ -579,6 +608,12 @@ function removeSocketFromRoom(socket) {
 
     sendRoomList();
 
+    if (wasTournamentPlayer) {
+        maybeFinishTournamentBySurvivor(roomName).catch(err => {
+            console.log('tournament finish after disconnect failed', err);
+        });
+    }
+
     socket.data.roomName = null;
     socket.data.roomRole = null;
     socket.data.isPlaying = false;
@@ -595,6 +630,139 @@ function sendToOtherPlayers(roomName, fromSocketId, eventName, payload) {
             otherSocket.emit(eventName, payload);
         }
     });
+}
+
+function getActiveOpponentSockets(roomName, fromSocketId) {
+    const room = rooms[roomName];
+    if (!room) return [];
+
+    return room.players
+        .filter(socketId => socketId !== fromSocketId)
+        .map(socketId => io.sockets.sockets.get(socketId))
+        .filter(otherSocket => otherSocket && otherSocket.data.isPlaying);
+}
+
+function getTournamentGarbageLines(baseGarbage, playerCount) {
+    if (baseGarbage <= 0) return 0;
+
+    const scale = Math.min(1, 4 / Math.max(2, playerCount));
+    const scaled = Math.round(baseGarbage * scale);
+
+    // Large tournament lobbies still get pressure, but only on strong clears.
+    if (scaled === 0 && baseGarbage >= 2) {
+        return 1;
+    }
+
+    return scaled;
+}
+
+function getTournamentScore(room, userId, fallback = 0) {
+    if (!room || !room.tournamentScores) {
+        return fallback;
+    }
+
+    const direct = room.tournamentScores[userId];
+    const stringKey = room.tournamentScores[String(userId)];
+    const score = direct != null ? direct : stringKey;
+
+    return Math.max(0, toPositiveInteger(score, fallback));
+}
+
+async function finalizeTournamentWithWinner(roomName, winnerSocket) {
+    const room = rooms[roomName];
+    if (!room || !isTournamentRoom(room) || !winnerSocket) return null;
+
+    const tournament = tournamentManager.getTournamentState(room.tournamentId);
+    if (!tournament || tournament.finishedAt) {
+        return tournament;
+    }
+
+    const winnerScore = getTournamentScore(room, winnerSocket.data.userId, 0);
+    room.tournamentScores[winnerSocket.data.userId] = winnerScore;
+
+    try {
+        tournamentManager.submitScore({
+            tournamentId: room.tournamentId,
+            userId: winnerSocket.data.userId,
+            score: winnerScore
+        });
+    } catch (err) {
+        if (!String(err.message || '').includes('score already submitted')) {
+            throw err;
+        }
+    }
+
+    const winnerResult = tournamentManager.buildWinnerResult({
+        tournamentId: room.tournamentId,
+        winnerUserId: winnerSocket.data.userId,
+        winnerUsername: winnerSocket.data.username,
+        winnerScore
+    });
+
+    const payoutStatus = await payTournamentWinner({
+        to: winnerResult.winner.userId,
+        amount: winnerResult.winnerPayout,
+        tournamentId: room.tournamentId
+    });
+
+    const nextTournament = tournamentManager.distributeRewards({
+        tournamentId: room.tournamentId,
+        winnerUserId: winnerResult.winner.userId,
+        winnerUsername: winnerResult.winner.username,
+        winnerScore: winnerResult.winner.score,
+        winnerPayout: winnerResult.winnerPayout,
+        platformCut: winnerResult.platformCut,
+        payoutStatus
+    });
+
+    room.locked = true;
+    room.tournamentFinalizing = false;
+    winnerSocket.data.isPlaying = false;
+
+    io.to(roomName).emit('tournamentFinished', {
+        roomName,
+        tournament: nextTournament,
+        winnerUserId: winnerResult.winner.userId,
+        winnerUsername: winnerResult.winner.username,
+        winnerPayout: winnerResult.winnerPayout,
+        payoutStatus
+    });
+
+    winnerSocket.emit('tournamentWinner', {
+        roomName,
+        tournament: nextTournament,
+        winnerPayout: winnerResult.winnerPayout,
+        payoutStatus
+    });
+
+    sendRoomState(roomName);
+    sendRoomList();
+
+    return nextTournament;
+}
+
+async function maybeFinishTournamentBySurvivor(roomName) {
+    const room = rooms[roomName];
+    if (!room || !isTournamentRoom(room) || room.tournamentFinalizing) return null;
+
+    const tournament = tournamentManager.getTournamentState(room.tournamentId);
+    if (!tournament || tournament.finishedAt) return tournament;
+
+    const activePlayers = room.players
+        .map(socketId => io.sockets.sockets.get(socketId))
+        .filter(playerSocket => playerSocket && playerSocket.data.isPlaying);
+
+    if (activePlayers.length !== 1) {
+        return tournament;
+    }
+
+    room.tournamentFinalizing = true;
+
+    try {
+        return await finalizeTournamentWithWinner(roomName, activePlayers[0]);
+    } finally {
+        room.tournamentFinalizing = false;
+    }
 }
 
 function sendToSpectators(roomName, eventName, payload) {
@@ -654,12 +822,16 @@ io.on('connection', socket => {
             roomType,
             password,
             locked: false,
+            ownerUserId: socket.data.userId,
+            ownerUsername: socket.data.username,
             creatorSocketId: socket.id,
             creatorUserId: socket.data.userId,
             creatorUsername: socket.data.username,
             players: [socket.id],
             spectators: [],
-            tournamentId: null
+            tournamentId: null,
+            tournamentScores: Object.create(null),
+            tournamentFinalizing: false
         };
 
         const finishRoomCreate = tournament => {
@@ -696,6 +868,8 @@ io.on('connection', socket => {
         const tournamentEntryFee = toPositiveInteger(data && data.entryFee);
         const bonusContribution = toPositiveInteger(data && data.bonusContribution);
         const minPlayers = Math.max(2, toPositiveInteger(data && data.minPlayers, 2));
+        const requestedMaxPlayers = toPositiveInteger(data && data.maxPlayers, DEFAULT_TOURNAMENT_MAX_PLAYERS);
+        const maxPlayers = Math.min(MAX_TOURNAMENT_PLAYERS, Math.max(2, requestedMaxPlayers));
         const pin = data && typeof data.pin === 'string' ? data.pin : '';
 
         if (tournamentEntryFee < MIN_TOURNAMENT_ENTRY_FEE) {
@@ -724,6 +898,7 @@ io.on('connection', socket => {
                     creatorUsername: socket.data.username,
                     entryFee: tournamentEntryFee,
                     minPlayers,
+                    maxPlayers,
                     bonusContribution
                 });
 
@@ -862,6 +1037,11 @@ io.on('connection', socket => {
             return;
         }
 
+        if (isTournamentRoom(room)) {
+            socket.emit('roomError', { message: 'live feed disabled for tournaments' });
+            return;
+        }
+
         room.spectators.push(socket.id);
         socket.join(roomName);
         socket.data.roomName = roomName;
@@ -882,6 +1062,63 @@ io.on('connection', socket => {
 
     socket.on('leaveRoom', () => {
         removeSocketFromRoom(socket);
+    });
+
+    socket.on('deleteRoom', data => {
+        const roomName = data && typeof data.roomName === 'string' ? data.roomName.trim() : '';
+        const room = rooms[roomName];
+
+        if (!room) {
+            socket.emit('roomError', { message: 'room not found' });
+            return;
+        }
+
+        if (!sameUserId(room.ownerUserId, socket.data.userId)) {
+            socket.emit('roomError', { message: 'only the room owner can delete this room' });
+            return;
+        }
+
+        try {
+            if (isTournamentRoom(room)) {
+                tournamentManager.deleteTournament({
+                    tournamentId: room.tournamentId,
+                    creatorUserId: socket.data.userId
+                });
+            }
+
+            closeRoom(roomName, `${roomName} was deleted by ${socket.data.username}`);
+        } catch (err) {
+            socket.emit('roomError', { message: err.message || 'could not delete room' });
+        }
+    });
+
+    socket.on('updateTournamentSettings', data => {
+        const roomName = socket.data.roomName;
+        if (!roomName || socket.data.roomRole !== 'player' || !rooms[roomName]) return;
+
+        const room = rooms[roomName];
+        if (!isTournamentRoom(room)) {
+            socket.emit('roomError', { message: 'not a tournament room' });
+            return;
+        }
+
+        if (!sameUserId(room.creatorUserId, socket.data.userId)) {
+            socket.emit('roomError', { message: 'only the room creator can change tournament settings' });
+            return;
+        }
+
+        try {
+            const tournament = tournamentManager.updateTournamentMaxPlayers(
+                room.tournamentId,
+                toPositiveInteger(data && data.maxPlayers)
+            );
+
+            sendRoomState(roomName);
+            sendRoomList();
+            socket.emit('tournamentUpdated', { tournament });
+        } catch (err) {
+            socket.emit('roomError', { message: err.message || 'could not update tournament settings' });
+        }
     });
 
     socket.on('startGame', () => {
@@ -934,11 +1171,14 @@ io.on('connection', socket => {
         const roomName = socket.data.roomName;
         if (!roomName || socket.data.roomRole !== 'player' || !rooms[roomName]) return;
 
-        if (isTournamentRoom(rooms[roomName])) {
+        socket.data.isPlaying = true;
+
+        const room = rooms[roomName];
+        if (room && isTournamentRoom(room)) {
+            room.tournamentScores[socket.data.userId] = getTournamentScore(room, socket.data.userId, 0);
             return;
         }
 
-        socket.data.isPlaying = true;
         io.to(roomName).emit('playerStarted', {
             roomName,
             userId: socket.data.userId,
@@ -950,7 +1190,10 @@ io.on('connection', socket => {
         const roomName = socket.data.roomName;
         if (!roomName || socket.data.roomRole !== 'player' || !rooms[roomName]) return;
 
-        if (isTournamentRoom(rooms[roomName])) {
+        const room = rooms[roomName];
+
+        if (isTournamentRoom(room)) {
+            room.tournamentScores[socket.data.userId] = Math.max(0, toPositiveInteger(data && data.score));
             return;
         }
 
@@ -973,13 +1216,27 @@ io.on('connection', socket => {
         const roomName = socket.data.roomName;
         if (!roomName || socket.data.roomRole !== 'player' || !rooms[roomName]) return;
 
-        if (isTournamentRoom(rooms[roomName])) {
-            return;
-        }
+        const room = rooms[roomName];
 
         const lines = Number(data && data.lines);
-        const garbage = Math.max(0, lines - 1);
+        let garbage = Math.max(0, lines - 1);
         if (garbage <= 0) return;
+
+        if (isTournamentRoom(room)) {
+            const tournament = tournamentManager.getTournamentState(room.tournamentId);
+            const activeOpponents = getActiveOpponentSockets(roomName, socket.id);
+            if (!tournament || activeOpponents.length === 0) return;
+
+            garbage = getTournamentGarbageLines(garbage, tournament.playerCount);
+            if (garbage <= 0) return;
+
+            activeOpponents.forEach(otherSocket => {
+                otherSocket.emit('garbage', {
+                    lines: garbage
+                });
+            });
+            return;
+        }
 
         sendToOtherPlayers(roomName, socket.id, 'garbage', { lines: garbage });
         sendToSpectators(roomName, 'roomMessage', {
@@ -994,6 +1251,9 @@ io.on('connection', socket => {
 
         if (isTournamentRoom(rooms[roomName])) {
             socket.data.isPlaying = false;
+            maybeFinishTournamentBySurvivor(roomName).catch(err => {
+                console.log('tournament finish after gameOver failed', err);
+            });
             return;
         }
 
@@ -1024,6 +1284,8 @@ io.on('connection', socket => {
         if (!isTournamentRoom(room)) return;
 
         const score = Math.max(0, toPositiveInteger(data && data.score));
+        socket.data.isPlaying = false;
+        room.tournamentScores[socket.data.userId] = score;
 
         try {
             const submission = tournamentManager.submitScore({
@@ -1034,7 +1296,12 @@ io.on('connection', socket => {
 
             let tournament = submission.tournament;
 
-            if (submission.isComplete) {
+            const survivorWinnerTournament = await maybeFinishTournamentBySurvivor(roomName);
+            if (survivorWinnerTournament) {
+                tournament = survivorWinnerTournament;
+            }
+
+            if (!tournament.finishedAt && submission.isComplete) {
                 const winnerResult = tournamentManager.determineWinner(room.tournamentId);
                 const payoutStatus = await payTournamentWinner({
                     to: winnerResult.winner.userId,

@@ -49,6 +49,7 @@ let selectedRoomName = '';
 let isRoomCreator = false;
 let uiScale = 1;
 let pieceRandom = Math.random;
+let pendingTournamentJoinRoom = '';
 
 function byId(id) {
   return document.getElementById(id);
@@ -60,6 +61,10 @@ function clamp(value, min, max) {
 
 function sameUserId(a, b) {
   return String(a) === String(b);
+}
+
+function isOwnedByPlayer(ownerUserId) {
+  return ownerUserId != null && sameUserId(ownerUserId, playerProfile.userId);
 }
 
 function isTournamentMode() {
@@ -181,7 +186,7 @@ function renderTournamentResults() {
     ? `${currentTournament.payoutStatus === 'paid' ? 'winner paid' : 'winner pending'} ${currentTournament.winnerPayout} / platform kept ${currentTournament.platformCut}`
     : (currentTournament.isLocked ? 'locked and accepting scores' : 'waiting for creator start');
 
-  meta.innerText = `entry ${currentTournament.entryFee} | pool ${currentTournament.prizePool} | ${currentTournament.submittedPlayers}/${currentTournament.playerCount} scores | ${stateText}`;
+  meta.innerText = `entry ${currentTournament.entryFee} | pool ${currentTournament.prizePool} | ${currentTournament.playerCount}/${currentTournament.maxPlayers} entered | ${currentTournament.submittedPlayers}/${currentTournament.playerCount} scores | ${stateText}`;
 
   if (!currentTournament.leaderboard || !currentTournament.leaderboard.length) {
     board.innerHTML = '<div class="room-empty">No tournament data yet</div>';
@@ -199,6 +204,33 @@ function renderTournamentResults() {
       </div>
     `;
   }).join('');
+
+  renderTournamentControls();
+}
+
+function renderTournamentControls() {
+  const wrap = byId('tournament-controls');
+  const input = byId('tournament-max-players-live');
+  const save = byId('save-tournament-settings-btn');
+  const hint = byId('tournament-settings-hint');
+  if (!wrap || !input || !save || !hint) return;
+
+  const showControls = currentRoomType === 'tournament'
+    && !!currentTournament
+    && playerRole === 'player'
+    && isRoomCreator;
+
+  wrap.style.display = showControls ? 'grid' : 'none';
+  if (!showControls) return;
+
+  input.value = currentTournament.maxPlayers || 8;
+
+  const locked = !!(currentTournament.isLocked || currentTournament.finishedAt);
+  input.disabled = locked;
+  save.disabled = locked;
+  hint.innerText = locked
+    ? 'Bracket is locked. Player limit cannot change after start.'
+    : 'Open tournament only. Limit can be set from 2 to 50 players.';
 }
 
 function setCurrentTournament(tournament) {
@@ -263,13 +295,10 @@ function updateStartButton() {
   const showButton = gameState === 'MENU'
     && playerRole === 'player'
     && isRoomCreator
-    && (
-      gameMode === 'multiplayer'
-      || (isTournamentMode() && currentTournament && !currentTournament.isLocked)
-    );
+    && gameMode === 'multiplayer';
   button.style.display = showButton ? 'block' : 'none';
   if (showButton) {
-    button.innerText = isTournamentMode() ? 'Start Tournament' : 'Start Game';
+    button.innerText = 'Start Game';
   }
 }
 
@@ -319,17 +348,26 @@ function updateModeUi() {
   updateStartButton();
   updatePrimaryButton();
   renderTournamentResults();
+  renderTournamentControls();
 }
 
 function clearRoomForm() {
   byId('room-password').value = '';
   byId('tournament-pin').value = '';
+  byId('tournament-max-players').value = '8';
   byId('join-pin').value = '';
 }
 
 function setSelectedRoom(roomName) {
   selectedRoomName = roomName || '';
   renderRoomList();
+}
+
+function requestTournamentJoinPin(roomName) {
+  const typed = window.prompt(`PIN required to join tournament ${roomName}.`, byId('join-pin').value || '');
+  if (typed === null) return null;
+  byId('join-pin').value = typed;
+  return typed;
 }
 
 function renderRoomList() {
@@ -354,25 +392,35 @@ function renderRoomList() {
 
     const isTournament = room.roomType === 'tournament';
     const modeText = isTournament
-      ? (room.locked ? 'locked bracket' : 'join tournament')
+      ? (room.locked ? 'locked bracket' : 'player-only bracket')
       : (room.playerCount >= 2 ? 'full room' : 'join as player');
     const rightText = isTournament
       ? `${room.submittedPlayers || 0}/${room.playerCount} scored`
       : `${room.spectatorCount} watch`;
+    const ownsRoom = isOwnedByPlayer(room.ownerUserId);
+    const canDeleteRoom = ownsRoom && (!isTournament || (!room.locked && room.playerCount <= 1));
+    const actions = [
+      '<button class="tiny-btn room-join-btn">JOIN</button>'
+    ];
+    if (!isTournament) {
+      actions.push('<button class="tiny-btn dark room-spectate-btn">WATCH</button>');
+    }
+    if (canDeleteRoom) {
+      actions.push('<button class="tiny-btn danger room-delete-btn">DELETE</button>');
+    }
     card.innerHTML = `
       <div class="room-card-top">
         <span>${room.roomName}</span>
         <span>${isTournament ? 'TOURNAMENT' : (room.passwordProtected ? 'LOCK' : 'OPEN')}</span>
       </div>
       <div class="room-card-bottom">
-        <span>${isTournament ? `${room.playerCount} entrants` : `${room.playerCount}/2 players`}</span>
+        <span>${isTournament ? `${room.playerCount}/${room.maxPlayers || 8} entrants` : `${room.playerCount}/2 players`}</span>
         <span>${modeText}</span>
         <span>${rightText}</span>
       </div>
       ${isTournament ? `<div class="room-card-bottom" style="margin-top:6px;"><span>entry ${room.entryFee}</span><span>pool ${room.prizePool}</span><span>${room.passwordProtected ? 'code' : 'open'}</span></div>` : ''}
       <div style="display:flex; justify-content:flex-end; gap:6px; margin-top:6px;">
-        <button class="tiny-btn room-join-btn">JOIN</button>
-        <button class="tiny-btn dark room-spectate-btn">WATCH</button>
+        ${actions.join('')}
       </div>
     `;
     card.querySelector('.room-join-btn').onclick = e => {
@@ -380,11 +428,21 @@ function renderRoomList() {
       setSelectedRoom(room.roomName);
       tryJoinRoom(room.roomName, false);
     };
-    card.querySelector('.room-spectate-btn').onclick = e => {
-      e.stopPropagation();
-      setSelectedRoom(room.roomName);
-      tryJoinRoom(room.roomName, true);
-    };
+    const spectateBtn = card.querySelector('.room-spectate-btn');
+    if (spectateBtn) {
+      spectateBtn.onclick = e => {
+        e.stopPropagation();
+        setSelectedRoom(room.roomName);
+        tryJoinRoom(room.roomName, true);
+      };
+    }
+    const deleteBtn = card.querySelector('.room-delete-btn');
+    if (deleteBtn) {
+      deleteBtn.onclick = e => {
+        e.stopPropagation();
+        deleteRoom(room.roomName);
+      };
+    }
     list.appendChild(card);
   });
 }
@@ -459,6 +517,7 @@ function initSocket() {
   });
 
   socket.on('roomJoined', data => {
+    pendingTournamentJoinRoom = '';
     currentRoom = data.roomName;
     playerRole = data.role;
     isRoomCreator = !!(data && data.isCreator);
@@ -496,7 +555,7 @@ function initSocket() {
       const winnerText = tournament.finishedAt && tournament.winnerUsername
         ? ` | winner ${tournament.winnerUsername}`
         : '';
-      setStatus(`${data.roomName}: ${tournament.playerCount} entered | pool ${tournament.prizePool} | ${tournament.submittedPlayers}/${tournament.playerCount} scores${winnerText}`);
+      setStatus(`${data.roomName}: ${tournament.playerCount}/${tournament.maxPlayers} entered | pool ${tournament.prizePool} | ${tournament.submittedPlayers}/${tournament.playerCount} scores${winnerText}`);
     } else {
       const playerNames = (data.players || []).map(player => player.username).filter(Boolean);
       const playerText = playerNames.length ? playerNames.join(' vs ') : 'waiting for players';
@@ -540,7 +599,7 @@ function initSocket() {
   });
 
   socket.on('garbage', data => {
-    if (gameState !== 'PLAYING' || gameMode !== 'multiplayer' || playerRole !== 'player') return;
+    if (gameState !== 'PLAYING' || (gameMode !== 'multiplayer' && gameMode !== 'tournament') || playerRole !== 'player') return;
     const lines = Number(data && data.lines) || 0;
     if (lines > 0) {
       addGarbageRows(lines);
@@ -580,7 +639,26 @@ function initSocket() {
   });
 
   socket.on('roomError', data => {
-    setStatus(data && data.message ? data.message : 'room error');
+    const message = data && data.message ? data.message : 'room error';
+    setStatus(message);
+    if (pendingTournamentJoinRoom) {
+      window.alert(`Tournament join failed: ${message}`);
+      pendingTournamentJoinRoom = '';
+    }
+  });
+
+  socket.on('roomClosed', data => {
+    const closedRoomName = data && data.roomName ? data.roomName : currentRoom;
+    const message = data && data.message ? data.message : 'room closed';
+
+    if (closedRoomName && currentRoom === closedRoomName) {
+      resetRoomState();
+      showMenuOverlay(message);
+      updateModeUi();
+      return;
+    }
+
+    setStatus(message);
   });
 
   socket.on('tournamentScoreAccepted', data => {
@@ -593,8 +671,57 @@ function initSocket() {
     showMenuOverlay(data ? `score submitted: ${data.score}` : 'score submitted');
   });
 
+  socket.on('tournamentUpdated', data => {
+    if (data && data.tournament) {
+      setCurrentTournament({
+        ...data.tournament,
+        hasSubmitted: !!(currentTournament && currentTournament.hasSubmitted)
+      });
+      setStatus(`tournament limit set to ${data.tournament.maxPlayers}`);
+    }
+  });
+
+  socket.on('tournamentFinished', data => {
+    if (data && data.tournament) {
+      const hasSubmitted = !!data.tournament.leaderboard.find(entry => sameUserId(entry.userId, playerProfile.userId) && entry.score != null);
+      setCurrentTournament({
+        ...data.tournament,
+        hasSubmitted
+      });
+    }
+
+    if (data && sameUserId(data.winnerUserId, playerProfile.userId)) {
+      return;
+    }
+
+    if (gameState === 'PLAYING' && gameMode === 'tournament') {
+      showMenuOverlay(data && data.winnerUsername
+        ? `tournament finished. winner: ${data.winnerUsername}`
+        : 'tournament finished');
+    }
+  });
+
+  socket.on('tournamentWinner', data => {
+    gameOverSent = true;
+
+    if (data && data.tournament) {
+      setCurrentTournament({
+        ...data.tournament,
+        hasSubmitted: true
+      });
+    }
+
+    const payoutText = data && data.payoutStatus === 'paid'
+      ? `You won ${data.winnerPayout}. Payout sent.`
+      : `You won ${data.winnerPayout}. Payout pending.`;
+
+    window.alert(`Congratulations! ${payoutText}`);
+    showMenuOverlay(payoutText);
+  });
+
   socket.on('disconnect', () => {
     const hadRoom = !!currentRoom;
+    pendingTournamentJoinRoom = '';
     resetRoomState();
     setStatus('offline');
     activeRooms = [];
@@ -626,9 +753,38 @@ function createRoomClicked() {
     password: byId('room-password').value,
     entryFee: byId('tournament-entry-fee').value,
     bonusContribution: byId('tournament-bonus').value,
+    maxPlayers: byId('tournament-max-players').value,
     pin: byId('tournament-pin').value
   });
   clearRoomForm();
+}
+
+function deleteRoom(roomName) {
+  if (!roomName) {
+    setStatus('pick a room first');
+    return;
+  }
+
+  if (!window.confirm(`Delete ${roomName}?`)) {
+    return;
+  }
+
+  initSocket();
+  if (!socket) return;
+
+  socket.emit('deleteRoom', { roomName });
+}
+
+function updateTournamentSettings() {
+  if (!socket || !currentRoom || !currentTournament) {
+    setStatus('join a tournament first');
+    return;
+  }
+
+  socket.emit('updateTournamentSettings', {
+    maxPlayers: byId('tournament-max-players-live').value
+  });
+  setStatus('updating tournament player limit...');
 }
 
 function tryJoinRoom(roomName, forceSpectate) {
@@ -646,9 +802,19 @@ function tryJoinRoom(roomName, forceSpectate) {
   leaveRoom();
 
   const room = activeRooms.find(item => item.roomName === targetRoom);
-  const joinPin = room && room.roomType === 'tournament' && !forceSpectate
+  const isPaidTournamentJoin = !!(room && room.roomType === 'tournament' && !forceSpectate);
+  let joinPin = isPaidTournamentJoin
     ? byId('join-pin').value
     : '';
+
+  if (isPaidTournamentJoin && !joinPin) {
+    joinPin = requestTournamentJoinPin(targetRoom);
+    if (joinPin === null) {
+      setStatus('tournament join cancelled');
+      return;
+    }
+  }
+
   setStatus(forceSpectate ? `watching ${targetRoom}...` : `joining ${targetRoom}...`);
 
   if (forceSpectate) {
@@ -657,6 +823,7 @@ function tryJoinRoom(roomName, forceSpectate) {
       password
     });
   } else {
+    pendingTournamentJoinRoom = isPaidTournamentJoin ? targetRoom : '';
     socket.emit('joinRoom', {
       roomName: targetRoom,
       password,
@@ -751,7 +918,7 @@ const keys = {
 const DAS_DELAY = 170;
 const DAS_SPEED = 50;
 const AUTOPLAY_SPEEDS = {
-  human: { rotate: 95, move: 70, drop: 40, finish: 120, hardDropBuffer: 1 },
+  human: { think: 220, rotate: 150, move: 115, drop: 85, finish: 200, hardDropBuffer: 0 },
   fast: { rotate: 65, move: 48, drop: 24, finish: 80, hardDropBuffer: 2 }
 };
 
@@ -904,7 +1071,7 @@ function runPlannedAutoplay(speed) {
       x: bestMove.x,
       y: bestMove.y
     } : null;
-    autoplayActionAt = 0;
+    autoplayActionAt = performance.now() + (speed.think || 0);
   }
 
   if (!autoplayPlan) return;
@@ -1035,7 +1202,7 @@ function startGame() {
   playerReset();
   updateModeUi();
 
-  if (socket && currentRoom && playerRole === 'player' && gameMode === 'multiplayer') {
+  if (socket && currentRoom && playerRole === 'player' && (gameMode === 'multiplayer' || gameMode === 'tournament')) {
     socket.emit('playerReady');
     sendStateUpdate(false);
   }
@@ -1207,7 +1374,7 @@ function buildBoardSnapshot() {
 }
 
 function sendStateUpdate(forceGameOver) {
-  if (!socket || !currentRoom || playerRole !== 'player' || gameMode !== 'multiplayer') return;
+  if (!socket || !currentRoom || playerRole !== 'player' || (gameMode !== 'multiplayer' && gameMode !== 'tournament')) return;
 
   const now = performance.now();
   if (!forceGameOver && now - lastStateSentAt < 120) return;
@@ -1270,7 +1437,7 @@ function update(time = 0) {
       player.lockMoves = 0;
     }
 
-    if (gameMode === 'multiplayer' && playerRole === 'player') {
+    if ((gameMode === 'multiplayer' || gameMode === 'tournament') && playerRole === 'player') {
       sendStateUpdate(false);
     }
   }

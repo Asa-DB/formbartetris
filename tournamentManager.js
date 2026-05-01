@@ -1,5 +1,8 @@
 const { db, saveUser } = require('./db');
 
+const DEFAULT_MAX_PLAYERS = 8;
+const MAX_TOURNAMENT_PLAYERS = 50;
+
 function asPublicTournament(row) {
     if (!row) return null;
 
@@ -28,6 +31,7 @@ function asPublicTournament(row) {
         creatorUsername: row.creator_username,
         entryFee: row.entry_fee,
         minPlayers: row.min_players,
+        maxPlayers: Number(row.max_players) || DEFAULT_MAX_PLAYERS,
         prizePool: row.prize_pool,
         isLocked: !!row.is_locked,
         seed: row.seed,
@@ -92,6 +96,7 @@ const createTournamentTxn = db.transaction(({
     creatorUsername,
     entryFee,
     minPlayers,
+    maxPlayers,
     bonusContribution
 }) => {
     saveUser(creatorUserId, creatorUsername);
@@ -103,15 +108,17 @@ const createTournamentTxn = db.transaction(({
             creator_username,
             entry_fee,
             min_players,
+            max_players,
             prize_pool
         )
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(
         roomName,
         creatorUserId,
         creatorUsername,
         entryFee,
         minPlayers,
+        maxPlayers,
         entryFee + bonusContribution
     );
 
@@ -160,6 +167,16 @@ function createTournament(options) {
 }
 
 const joinTournamentTxn = db.transaction(({ tournamentId, userId, username, paidAmount }) => {
+    const tournament = getTournamentState(tournamentId);
+
+    if (!tournament) {
+        throw new Error('tournament not found');
+    }
+
+    if (tournament.playerCount >= tournament.maxPlayers) {
+        throw new Error(`tournament is full (${tournament.maxPlayers} players max)`);
+    }
+
     saveUser(userId, username);
 
     db.prepare(`
@@ -193,6 +210,59 @@ const joinTournamentTxn = db.transaction(({ tournamentId, userId, username, paid
 function joinTournament({ tournamentId, userId, username, paidAmount }) {
     joinTournamentTxn({ tournamentId, userId, username, paidAmount });
     return getTournamentState(tournamentId);
+}
+
+function updateTournamentMaxPlayers(tournamentId, maxPlayers) {
+    const tournament = getTournamentState(tournamentId);
+
+    if (!tournament) {
+        throw new Error('tournament not found');
+    }
+
+    if (tournament.isLocked || tournament.finishedAt) {
+        throw new Error('tournament already started');
+    }
+
+    if (!Number.isInteger(maxPlayers) || maxPlayers < 2 || maxPlayers > MAX_TOURNAMENT_PLAYERS) {
+        throw new Error(`player limit must be between 2 and ${MAX_TOURNAMENT_PLAYERS}`);
+    }
+
+    if (tournament.playerCount > maxPlayers) {
+        throw new Error(`cannot set player limit below ${tournament.playerCount}`);
+    }
+
+    db.prepare(`
+        UPDATE tournaments
+        SET max_players = ?
+        WHERE id = ?
+    `).run(maxPlayers, tournamentId);
+
+    return getTournamentState(tournamentId);
+}
+
+function deleteTournament({ tournamentId, creatorUserId }) {
+    const tournament = getTournamentState(tournamentId);
+
+    if (!tournament) {
+        throw new Error('tournament not found');
+    }
+
+    if (creatorUserId != null && String(tournament.creatorUserId) !== String(creatorUserId)) {
+        throw new Error('only the tournament creator can delete this room');
+    }
+
+    if (tournament.isLocked || tournament.startedAt || tournament.finishedAt) {
+        throw new Error('cannot delete a started tournament');
+    }
+
+    if (tournament.playerCount > 1) {
+        throw new Error('cannot delete a tournament after other entrants have joined');
+    }
+
+    db.prepare(`
+        DELETE FROM tournaments
+        WHERE id = ?
+    `).run(tournamentId);
 }
 
 function lockTournament(tournamentId) {
@@ -281,12 +351,42 @@ function determineWinner(tournamentId) {
         throw new Error('no submitted scores');
     }
 
-    const winnerPayout = Math.floor(tournament.prizePool * 0.65);
-    const platformCut = tournament.prizePool - winnerPayout;
+    const { winnerPayout, platformCut } = calculatePayoutBreakdown(tournament.prizePool);
 
     return {
         tournament,
         winner,
+        winnerPayout,
+        platformCut
+    };
+}
+
+function buildWinnerResult({ tournamentId, winnerUserId, winnerUsername, winnerScore }) {
+    const tournament = getTournamentState(tournamentId);
+
+    if (!tournament) {
+        throw new Error('tournament not found');
+    }
+
+    const { winnerPayout, platformCut } = calculatePayoutBreakdown(tournament.prizePool);
+
+    return {
+        tournament,
+        winner: {
+            userId: winnerUserId,
+            username: winnerUsername,
+            score: winnerScore
+        },
+        winnerPayout,
+        platformCut
+    };
+}
+
+function calculatePayoutBreakdown(prizePool) {
+    const winnerPayout = Math.floor(prizePool * 0.65);
+    const platformCut = prizePool - winnerPayout;
+
+    return {
         winnerPayout,
         platformCut
     };
@@ -369,7 +469,10 @@ module.exports = {
     lockTournament,
     submitScore,
     determineWinner,
+    buildWinnerResult,
     distributeRewards,
+    updateTournamentMaxPlayers,
+    deleteTournament,
     getTournamentState,
     getTournamentByRoomName,
     getTournamentEntry,

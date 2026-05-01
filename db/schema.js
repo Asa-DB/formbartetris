@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS tournaments (
     creator_username TEXT NOT NULL,
     entry_fee INTEGER NOT NULL,
     min_players INTEGER NOT NULL DEFAULT 2,
+    max_players INTEGER NOT NULL DEFAULT 8,
     prize_pool INTEGER NOT NULL DEFAULT 0,
     is_locked INTEGER NOT NULL DEFAULT 0,
     seed INTEGER,
