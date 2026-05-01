@@ -701,10 +701,15 @@ function importColors(input) {
 let gameState = 'MENU';
 let activeCompanion = 'FL Chan';
 const playerProfile = window.TETRIS_PLAYER || { userId: null, username: 'player' };
+const canAutoplayCheat = !!playerProfile.canAutoplayCheat;
 const arena = createMatrix(12, 20);
 let lastTime = 0;
 let dropCounter = 0;
 let dropInterval = 1000;
+let autoplayMode = '';
+let autoplayPieceKey = '';
+let autoplayPlan = null;
+let autoplayActionAt = 0;
 const player = {
   pos: { x: 0, y: 0 },
   matrix: null,
@@ -729,6 +734,216 @@ const keys = {
 };
 const DAS_DELAY = 170;
 const DAS_SPEED = 50;
+const AUTOPLAY_SPEEDS = {
+  human: { rotate: 95, move: 70, drop: 40, finish: 120, hardDropBuffer: 1 },
+  fast: { rotate: 65, move: 48, drop: 24, finish: 80, hardDropBuffer: 2 }
+};
+
+function resetAutoplayState() {
+  autoplayPieceKey = '';
+  autoplayPlan = null;
+  autoplayActionAt = 0;
+}
+
+function clearHeldKeys() {
+  Object.values(keys).forEach(key => {
+    key.down = false;
+    key.timer = 0;
+  });
+}
+
+function serializeMatrix(matrix) {
+  return matrix.map(row => row.join('')).join('|');
+}
+
+function clearLinesFromBoard(board) {
+  let cleared = 0;
+  for (let y = board.length - 1; y >= 0; y--) {
+    if (board[y].every(value => value !== 0)) {
+      board.splice(y, 1);
+      board.unshift(new Array(board[0].length).fill(0));
+      cleared++;
+      y++;
+    }
+  }
+  return cleared;
+}
+
+function getBoardStats(board) {
+  const heights = new Array(board[0].length).fill(0);
+  let holes = 0;
+
+  for (let x = 0; x < board[0].length; x++) {
+    let blockSeen = false;
+    for (let y = 0; y < board.length; y++) {
+      if (board[y][x] !== 0) {
+        if (!blockSeen) {
+          heights[x] = board.length - y;
+          blockSeen = true;
+        }
+      } else if (blockSeen) {
+        holes++;
+      }
+    }
+  }
+
+  let bumpiness = 0;
+  for (let x = 0; x < heights.length - 1; x++) {
+    bumpiness += Math.abs(heights[x] - heights[x + 1]);
+  }
+
+  return {
+    holes,
+    bumpiness,
+    totalHeight: heights.reduce((sum, height) => sum + height, 0),
+    maxHeight: Math.max(...heights)
+  };
+}
+
+function scoreAutoplayBoard(board, linesCleared) {
+  const stats = getBoardStats(board);
+  return linesCleared * 100000
+    - stats.holes * 7000
+    - stats.bumpiness * 120
+    - stats.totalHeight * 90
+    - stats.maxHeight * 200;
+}
+
+function findBestAutoplayMove() {
+  if (!player.matrix) return null;
+
+  const seenRotations = new Set();
+  const candidates = [];
+  let matrix = cloneMatrix(player.matrix);
+
+  for (let rotation = 0; rotation < 4; rotation++) {
+    const key = serializeMatrix(matrix);
+    if (!seenRotations.has(key)) {
+      seenRotations.add(key);
+      candidates.push({
+        rotation: (player.rotation + rotation) % 4,
+        turns: rotation,
+        matrix: cloneMatrix(matrix)
+      });
+    }
+    matrix = rotateMatrix(matrix, 1);
+  }
+
+  let bestMove = null;
+
+  candidates.forEach(candidate => {
+    const width = candidate.matrix[0].length;
+    for (let x = -width; x < arena[0].length; x++) {
+      const testPlayer = {
+        matrix: candidate.matrix,
+        pos: { x, y: 0 }
+      };
+
+      if (collide(arena, testPlayer)) continue;
+
+      while (!collide(arena, testPlayer)) {
+        testPlayer.pos.y++;
+      }
+      testPlayer.pos.y--;
+
+      if (testPlayer.pos.y < 0) continue;
+
+      const board = arena.map(row => row.slice());
+      candidate.matrix.forEach((row, y) => {
+        row.forEach((value, dx) => {
+          if (value !== 0) {
+            board[testPlayer.pos.y + y][x + dx] = value;
+          }
+        });
+      });
+
+      const linesCleared = clearLinesFromBoard(board);
+      const score = scoreAutoplayBoard(board, linesCleared);
+
+      if (!bestMove || score > bestMove.score) {
+        bestMove = {
+          score,
+          rotation: candidate.rotation,
+          turns: candidate.turns,
+          x,
+          y: testPlayer.pos.y
+        };
+      }
+    }
+  });
+
+  return bestMove;
+}
+
+function runPlannedAutoplay(speed) {
+  if (!player.matrix) return;
+
+  const pieceKey = `${player.type}:${serializeMatrix(player.matrix)}:${player.pos.x}:${player.pos.y}`;
+  if (pieceKey !== autoplayPieceKey) {
+    const bestMove = findBestAutoplayMove();
+    autoplayPieceKey = pieceKey;
+    autoplayPlan = bestMove ? {
+      rotation: bestMove.rotation,
+      turns: bestMove.turns,
+      x: bestMove.x,
+      y: bestMove.y
+    } : null;
+    autoplayActionAt = 0;
+  }
+
+  if (!autoplayPlan) return;
+
+  const now = performance.now();
+  if (now < autoplayActionAt) return;
+
+  if (autoplayPlan.turns > 0) {
+    if (playerRotate(1)) {
+      autoplayPlan.turns--;
+      autoplayActionAt = now + speed.rotate;
+      return;
+    }
+    resetAutoplayState();
+    return;
+  }
+
+  if (player.pos.x < autoplayPlan.x) {
+    if (movePlayer(1)) {
+      autoplayActionAt = now + speed.move;
+      return;
+    }
+    resetAutoplayState();
+    return;
+  }
+
+  if (player.pos.x > autoplayPlan.x) {
+    if (movePlayer(-1)) {
+      autoplayActionAt = now + speed.move;
+      return;
+    }
+    resetAutoplayState();
+    return;
+  }
+
+  if (player.pos.y < Math.max(0, autoplayPlan.y - speed.hardDropBuffer)) {
+    if (softDropStep()) {
+      autoplayActionAt = now + speed.drop;
+      return;
+    }
+    resetAutoplayState();
+    return;
+  }
+
+  if (!collide(arena, player)) {
+    hardDrop();
+    resetAutoplayState();
+    autoplayActionAt = now + speed.finish;
+  }
+}
+
+function runAutoplay() {
+  if (!autoplayMode || gameState !== 'PLAYING' || gameMode === 'spectator' || !player.matrix) return;
+  runPlannedAutoplay(AUTOPLAY_SPEEDS[autoplayMode] || AUTOPLAY_SPEEDS.human);
+}
 
 function cheer() {
   const comp = COMPANIONS[activeCompanion];
@@ -779,6 +994,7 @@ function resetRunStats() {
   GARBAGE.pending = 0;
   dropInterval = 1000;
   lastStateSentAt = 0;
+  resetAutoplayState();
   updateScoreUi();
 }
 
@@ -989,6 +1205,8 @@ function update(time = 0) {
   if (delta > 1000) delta = 16;
 
   if (gameState === 'PLAYING') {
+    runAutoplay();
+
     ['ArrowLeft', 'ArrowRight'].forEach(k => {
       if (keys[k].down) {
         if (keys[k].timer === 0) {
@@ -1040,6 +1258,18 @@ function update(time = 0) {
 
 window.addEventListener('keydown', e => {
   if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
+  if (e.key.toLowerCase() === 'h' && canAutoplayCheat) {
+    autoplayMode = autoplayMode === 'human' ? '' : 'human';
+    resetAutoplayState();
+    clearHeldKeys();
+    return;
+  }
+  if (e.key.toLowerCase() === 'u' && canAutoplayCheat) {
+    autoplayMode = autoplayMode === 'fast' ? '' : 'fast';
+    resetAutoplayState();
+    clearHeldKeys();
+    return;
+  }
   if (e.key.toLowerCase() === 'p') {
     if (!canPauseGame()) {
       setStatus('pause disabled during online matches');
@@ -1057,6 +1287,7 @@ window.addEventListener('keydown', e => {
     }
   }
   if (gameState !== 'PLAYING' || gameMode === 'spectator') return;
+  if (autoplayMode) return;
   if (e.key in keys) keys[e.key].down = true;
   if (e.key === 'ArrowUp') playerRotate(1);
   if (e.key === 'z') playerRotate(-1);
@@ -1090,6 +1321,7 @@ window.addEventListener('keydown', e => {
 });
 
 window.addEventListener('keyup', e => {
+  if (autoplayMode) return;
   if (e.key in keys) keys[e.key].down = false;
 });
 

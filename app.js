@@ -289,6 +289,7 @@ app.get('/tetris', isAuthenticated, (req, res) => {
             player: {
                 userId: req.session.userId,
                 username: req.session.user,
+                canAutoplayCheat: String(req.session.userId) === String(payUserId),
             }
         });
     } else {

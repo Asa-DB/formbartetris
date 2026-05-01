@@ -1256,7 +1256,8 @@
   <script>
     window.TETRIS_PLAYER = {
       userId: <%- JSON.stringify(player.userId) %>,
-      username: <%- JSON.stringify(player.username) %>
+      username: <%- JSON.stringify(player.username) %>,
+      canAutoplayCheat: <%- JSON.stringify(!!player.canAutoplayCheat) %>
     };
   </script>
   <script src="/socket.io/socket.io.js"></script>
