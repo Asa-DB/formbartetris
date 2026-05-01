@@ -154,7 +154,7 @@ let pieceQueue = [];
 function shuffleBag() {
   const nextBag = 'IJLOSTZ'.split('');
   for (let i = nextBag.length - 1; i > 0; --i) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(pieceRandom() * (i + 1));
     [nextBag[i], nextBag[j]] = [nextBag[j], nextBag[i]];
   }
   return nextBag;

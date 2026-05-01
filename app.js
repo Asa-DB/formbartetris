@@ -12,6 +12,7 @@ const {
     createMatch,
     getTopScores,
 } = require('./db');
+const tournamentManager = require('./tournamentManager');
 
 // Load the environment variables from the .env file
 // .env files are hidden and ignored by git so users and developers can't see them
@@ -32,7 +33,9 @@ const formbarLogin = formbarAddress + '/oauth';
 const thisUrl = process.env.THIS_URL;
 const thisUrlLogin = thisUrl + '/login';
 const payUserId = process.env.PAYUSER;
+const payUserPin = process.env.PAYUSER_PIN || '';
 const entryFee = process.env.ENTRYFEE;
+const MIN_TOURNAMENT_ENTRY_FEE = 120;
 const isProduction = process.env.NODE_ENV === 'production';
 
 if (!sessionSecret) {
@@ -82,6 +85,16 @@ app.set('views', path.join(__dirname, 'views'));
 // Needed to read POST data from the form
 app.use(express.urlencoded({ extended: true }));
 
+function toPositiveInteger(value, fallback = 0) {
+    const parsed = Number(value);
+
+    if (!Number.isInteger(parsed) || parsed < 0) {
+        return fallback;
+    }
+
+    return parsed;
+}
+
 function clearSession(req) {
     req.session.token = null;
     req.session.user = null;
@@ -129,6 +142,69 @@ function verifyToken(token) {
     }
 
     return tokenData;
+}
+
+async function transferDigipogs(payload) {
+    const response = await fetch(`${formbarAddress}/api/digipogs/transfer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+
+    const responseData = await response.json().catch(() => ({}));
+
+    if (!response.ok || !responseData.success) {
+        throw new Error(responseData.message || 'digipog transfer failed');
+    }
+
+    return responseData;
+}
+
+async function chargeDigipogs({ from, amount, reason, pin }) {
+    if (amount <= 0) {
+        return { success: true };
+    }
+
+    if (isLocalDevAuthEnabled || (localDevAuth && localDevAuth.skipPayment === true)) {
+        return { success: true };
+    }
+
+    if (String(from) === String(payUserId)) {
+        return { success: true };
+    }
+
+    return transferDigipogs({
+        from,
+        to: payUserId,
+        amount,
+        reason,
+        pin
+    });
+}
+
+async function payTournamentWinner({ to, amount, tournamentId }) {
+    if (amount <= 0 || String(to) === String(payUserId)) {
+        return 'paid';
+    }
+
+    if (!payUserPin) {
+        return 'pending';
+    }
+
+    try {
+        await transferDigipogs({
+            from: payUserId,
+            to,
+            amount,
+            reason: `Tournament payout #${tournamentId}`,
+            pin: payUserPin
+        });
+
+        return 'paid';
+    } catch (err) {
+        console.log('tournament payout failed', err);
+        return 'pending';
+    }
 }
 
 function wrapExpressMiddleware(middleware) {
@@ -320,6 +396,25 @@ const adjectives = ['pink', 'lazy', 'angry', 'blue', 'sleepy', 'tiny', 'happy', 
 const animals = ['fox', 'cat', 'panda', 'turtle', 'bear', 'rabbit', 'otter', 'lizard', 'wolf', 'duck'];
 const rooms = {};
 
+function isTournamentRoom(room) {
+    return !!(room && room.roomType === 'tournament' && room.tournamentId);
+}
+
+function normalizeRoomType(value) {
+    return value === 'tournament' ? 'tournament' : 'standard';
+}
+
+function getConnectedPlayerUserIds(room) {
+    return room.players
+        .map(socketId => io.sockets.sockets.get(socketId))
+        .filter(Boolean)
+        .map(socket => socket.data.userId);
+}
+
+function isUserAlreadyInRoom(room, userId) {
+    return getConnectedPlayerUserIds(room).includes(userId);
+}
+
 io.use(wrapExpressMiddleware(sessionMiddleware));
 
 function makeRoomName() {
@@ -345,13 +440,18 @@ function getRoomInfo(roomName) {
     if (!room) return null;
 
     const creatorSocket = room.creatorSocketId ? io.sockets.sockets.get(room.creatorSocketId) : null;
+    const tournament = isTournamentRoom(room)
+        ? tournamentManager.getTournamentState(room.tournamentId)
+        : null;
 
     return {
         roomName,
+        roomType: room.roomType || 'standard',
         passwordProtected: !!room.password,
+        locked: !!room.locked,
         creatorSocketId: room.creatorSocketId || null,
-        creatorUserId: creatorSocket ? creatorSocket.data.userId : null,
-        creatorUsername: creatorSocket ? creatorSocket.data.username : null,
+        creatorUserId: room.creatorUserId || (creatorSocket ? creatorSocket.data.userId : null),
+        creatorUsername: creatorSocket ? creatorSocket.data.username : room.creatorUsername || null,
         players: room.players.map(socketId => {
             const playerSocket = io.sockets.sockets.get(socketId);
             return {
@@ -360,19 +460,32 @@ function getRoomInfo(roomName) {
                 username: playerSocket ? playerSocket.data.username : 'player'
             };
         }),
-        spectators: room.spectators.length
+        spectators: room.spectators.length,
+        tournament
     };
 }
 
 function getRoomList() {
     return Object.keys(rooms)
         .sort()
-        .map(roomName => ({
-            roomName,
-            playerCount: rooms[roomName].players.length,
-            spectatorCount: rooms[roomName].spectators.length,
-            passwordProtected: !!rooms[roomName].password
-        }));
+        .map(roomName => {
+            const room = rooms[roomName];
+            const tournament = isTournamentRoom(room)
+                ? tournamentManager.getTournamentState(room.tournamentId)
+                : null;
+
+            return {
+                roomName,
+                roomType: room.roomType || 'standard',
+                playerCount: tournament ? tournament.playerCount : room.players.length,
+                spectatorCount: room.spectators.length,
+                passwordProtected: !!room.password,
+                locked: !!room.locked,
+                entryFee: tournament ? tournament.entryFee : null,
+                prizePool: tournament ? tournament.prizePool : null,
+                submittedPlayers: tournament ? tournament.submittedPlayers : null
+            };
+        });
 }
 
 function sendRoomList(targetSocket) {
@@ -392,11 +505,11 @@ function removeSocketFromRoom(socket) {
     const wasPlayer = room.players.includes(socket.id);
     const hadOpponent = room.players.some(id => id !== socket.id);
 
-    if (wasPlayer && socket.data.isPlaying && hadOpponent) {
+    if (!isTournamentRoom(room) && wasPlayer && socket.data.isPlaying && hadOpponent) {
         sendToOtherPlayers(roomName, socket.id, 'opponentWin', { roomName });
     }
 
-    if (wasPlayer) {
+    if (wasPlayer && !isTournamentRoom(room)) {
         sendToSpectators(roomName, 'roomMessage', {
             roomName,
             message: `${socket.data.username} left`
@@ -407,14 +520,32 @@ function removeSocketFromRoom(socket) {
     room.spectators = room.spectators.filter(id => id !== socket.id);
 
     if (room.creatorSocketId === socket.id) {
-        room.creatorSocketId = room.players[0] || null;
+        if (isTournamentRoom(room)) {
+            room.creatorSocketId = null;
+        } else {
+            room.creatorSocketId = room.players[0] || null;
+            if (room.creatorSocketId) {
+                const nextCreatorSocket = io.sockets.sockets.get(room.creatorSocketId);
+                if (nextCreatorSocket) {
+                    room.creatorUserId = nextCreatorSocket.data.userId;
+                    room.creatorUsername = nextCreatorSocket.data.username;
+                }
+            }
+        }
     }
 
     socket.leave(roomName);
 
-    if (room.players.length === 0 && room.spectators.length === 0) {
+    if (!isTournamentRoom(room) && room.players.length === 0 && room.spectators.length === 0) {
         delete rooms[roomName];
     } else {
+        const replacementSocketId = room.players.find(socketId => {
+            const playerSocket = io.sockets.sockets.get(socketId);
+            return playerSocket && playerSocket.data.userId === room.creatorUserId;
+        });
+        if (replacementSocketId) {
+            room.creatorSocketId = replacementSocketId;
+        }
         io.to(roomName).emit('roomState', getRoomInfo(roomName));
     }
 
@@ -486,32 +617,93 @@ io.on('connection', socket => {
             return;
         }
 
+        const roomType = normalizeRoomType(data && data.roomType);
         const roomName = makeRoomName();
         const password = data && typeof data.password === 'string' && data.password.trim()
             ? data.password.trim()
             : null;
-
-        rooms[roomName] = {
+        const baseRoom = {
+            roomType,
             password,
+            locked: false,
             creatorSocketId: socket.id,
+            creatorUserId: socket.data.userId,
+            creatorUsername: socket.data.username,
             players: [socket.id],
-            spectators: []
+            spectators: [],
+            tournamentId: null
         };
 
-        socket.join(roomName);
-        socket.data.roomName = roomName;
-        socket.data.roomRole = 'player';
-        socket.data.isPlaying = false;
+        const finishRoomCreate = tournament => {
+            if (tournament) {
+                baseRoom.tournamentId = tournament.id;
+                baseRoom.locked = tournament.isLocked;
+            }
 
-        socket.emit('roomCreated', {
-            roomName,
-            passwordProtected: !!password,
-            creatorSocketId: socket.id,
-            isCreator: true
-        });
+            rooms[roomName] = baseRoom;
 
-        sendRoomState(roomName);
-        sendRoomList();
+            socket.join(roomName);
+            socket.data.roomName = roomName;
+            socket.data.roomRole = 'player';
+            socket.data.isPlaying = false;
+
+            socket.emit('roomCreated', {
+                roomName,
+                roomType,
+                passwordProtected: !!password,
+                creatorSocketId: socket.id,
+                isCreator: true,
+                tournament
+            });
+
+            sendRoomState(roomName);
+            sendRoomList();
+        };
+
+        if (roomType !== 'tournament') {
+            finishRoomCreate(null);
+            return;
+        }
+
+        const tournamentEntryFee = toPositiveInteger(data && data.entryFee);
+        const bonusContribution = toPositiveInteger(data && data.bonusContribution);
+        const minPlayers = Math.max(2, toPositiveInteger(data && data.minPlayers, 2));
+        const pin = data && typeof data.pin === 'string' ? data.pin : '';
+
+        if (tournamentEntryFee < MIN_TOURNAMENT_ENTRY_FEE) {
+            socket.emit('roomError', {
+                message: `tournament entry fee must be at least ${MIN_TOURNAMENT_ENTRY_FEE}`
+            });
+            return;
+        }
+
+        const totalCharge = tournamentEntryFee + bonusContribution;
+
+        (async () => {
+            try {
+                if (!isLocalDevAuthEnabled) {
+                    await chargeDigipogs({
+                        from: socket.data.userId,
+                        amount: totalCharge,
+                        reason: `Create tournament room ${roomName}`,
+                        pin
+                    });
+                }
+
+                const tournament = tournamentManager.createTournament({
+                    roomName,
+                    creatorUserId: socket.data.userId,
+                    creatorUsername: socket.data.username,
+                    entryFee: tournamentEntryFee,
+                    minPlayers,
+                    bonusContribution
+                });
+
+                finishRoomCreate(tournament);
+            } catch (err) {
+                socket.emit('roomError', { message: err.message || 'could not create tournament' });
+            }
+        })();
     });
 
     socket.on('joinRoom', data => {
@@ -534,6 +726,69 @@ io.on('connection', socket => {
             return;
         }
 
+        if (isUserAlreadyInRoom(room, socket.data.userId)) {
+            socket.emit('roomError', { message: 'you are already in this room' });
+            return;
+        }
+
+        if (isTournamentRoom(room)) {
+            const tournament = tournamentManager.getTournamentState(room.tournamentId);
+            const existingEntry = tournamentManager.getTournamentEntry(room.tournamentId, socket.data.userId);
+            const pin = data && typeof data.pin === 'string' ? data.pin : '';
+
+            if (room.locked && !existingEntry) {
+                socket.emit('roomError', { message: 'tournament already locked' });
+                return;
+            }
+
+            (async () => {
+                try {
+                    if (!existingEntry) {
+                        if (!isLocalDevAuthEnabled) {
+                            await chargeDigipogs({
+                                from: socket.data.userId,
+                                amount: tournament.entryFee,
+                                reason: `Join tournament room ${roomName}`,
+                                pin
+                            });
+                        }
+
+                        tournamentManager.joinTournament({
+                            tournamentId: room.tournamentId,
+                            userId: socket.data.userId,
+                            username: socket.data.username,
+                            paidAmount: tournament.entryFee
+                        });
+                    }
+
+                    room.players.push(socket.id);
+                    if (socket.data.userId === room.creatorUserId) {
+                        room.creatorSocketId = socket.id;
+                    }
+
+                    socket.join(roomName);
+                    socket.data.roomName = roomName;
+                    socket.data.roomRole = 'player';
+                    socket.data.isPlaying = false;
+
+                    socket.emit('roomJoined', {
+                        roomName,
+                        roomType: 'tournament',
+                        role: 'player',
+                        creatorSocketId: room.creatorSocketId || null,
+                        isCreator: room.creatorUserId === socket.data.userId,
+                        tournament: tournamentManager.getTournamentState(room.tournamentId)
+                    });
+
+                    sendRoomState(roomName);
+                    sendRoomList();
+                } catch (err) {
+                    socket.emit('roomError', { message: err.message || 'could not join tournament' });
+                }
+            })();
+            return;
+        }
+
         const role = room.players.length < 2 ? 'player' : 'spectator';
         if (role === 'player') {
             room.players.push(socket.id);
@@ -548,9 +803,10 @@ io.on('connection', socket => {
 
         socket.emit('roomJoined', {
             roomName,
+            roomType: room.roomType || 'standard',
             role,
             creatorSocketId: room.creatorSocketId || null,
-            isCreator: room.creatorSocketId === socket.id
+            isCreator: room.creatorUserId === socket.data.userId
         });
 
         sendRoomState(roomName);
@@ -585,6 +841,7 @@ io.on('connection', socket => {
 
         socket.emit('roomJoined', {
             roomName,
+            roomType: room.roomType || 'standard',
             role: 'spectator',
             creatorSocketId: room.creatorSocketId || null,
             isCreator: false
@@ -603,8 +860,26 @@ io.on('connection', socket => {
         if (!roomName || socket.data.roomRole !== 'player' || !rooms[roomName]) return;
 
         const room = rooms[roomName];
-        if (room.creatorSocketId !== socket.id) {
+        if (room.creatorUserId !== socket.data.userId) {
             socket.emit('roomError', { message: 'only the room creator can start' });
+            return;
+        }
+
+        if (isTournamentRoom(room)) {
+            try {
+                const tournament = tournamentManager.lockTournament(room.tournamentId);
+                room.locked = true;
+                io.to(roomName).emit('gameStart', {
+                    roomName,
+                    roomType: 'tournament',
+                    seed: tournament.seed,
+                    startedBy: socket.data.username
+                });
+                sendRoomState(roomName);
+                sendRoomList();
+            } catch (err) {
+                socket.emit('roomError', { message: err.message || 'could not start tournament' });
+            }
             return;
         }
 
@@ -630,6 +905,10 @@ io.on('connection', socket => {
         const roomName = socket.data.roomName;
         if (!roomName || socket.data.roomRole !== 'player' || !rooms[roomName]) return;
 
+        if (isTournamentRoom(rooms[roomName])) {
+            return;
+        }
+
         socket.data.isPlaying = true;
         io.to(roomName).emit('playerStarted', {
             roomName,
@@ -641,6 +920,10 @@ io.on('connection', socket => {
     socket.on('stateUpdate', data => {
         const roomName = socket.data.roomName;
         if (!roomName || socket.data.roomRole !== 'player' || !rooms[roomName]) return;
+
+        if (isTournamentRoom(rooms[roomName])) {
+            return;
+        }
 
         const payload = {
             roomName,
@@ -661,6 +944,10 @@ io.on('connection', socket => {
         const roomName = socket.data.roomName;
         if (!roomName || socket.data.roomRole !== 'player' || !rooms[roomName]) return;
 
+        if (isTournamentRoom(rooms[roomName])) {
+            return;
+        }
+
         const lines = Number(data && data.lines);
         const garbage = Math.max(0, lines - 1);
         if (garbage <= 0) return;
@@ -675,6 +962,11 @@ io.on('connection', socket => {
     socket.on('gameOver', () => {
         const roomName = socket.data.roomName;
         if (!roomName || socket.data.roomRole !== 'player' || !rooms[roomName]) return;
+
+        if (isTournamentRoom(rooms[roomName])) {
+            socket.data.isPlaying = false;
+            return;
+        }
 
         socket.data.isPlaying = false;
 
@@ -693,6 +985,56 @@ io.on('connection', socket => {
             lines: 0,
             gameOver: true
         });
+    });
+
+    socket.on('submitTournamentScore', async data => {
+        const roomName = socket.data.roomName;
+        if (!roomName || socket.data.roomRole !== 'player' || !rooms[roomName]) return;
+
+        const room = rooms[roomName];
+        if (!isTournamentRoom(room)) return;
+
+        const score = Math.max(0, toPositiveInteger(data && data.score));
+
+        try {
+            const submission = tournamentManager.submitScore({
+                tournamentId: room.tournamentId,
+                userId: socket.data.userId,
+                score
+            });
+
+            let tournament = submission.tournament;
+
+            if (submission.isComplete) {
+                const winnerResult = tournamentManager.determineWinner(room.tournamentId);
+                const payoutStatus = await payTournamentWinner({
+                    to: winnerResult.winner.userId,
+                    amount: winnerResult.winnerPayout,
+                    tournamentId: room.tournamentId
+                });
+
+                tournament = tournamentManager.distributeRewards({
+                    tournamentId: room.tournamentId,
+                    winnerUserId: winnerResult.winner.userId,
+                    winnerUsername: winnerResult.winner.username,
+                    winnerScore: winnerResult.winner.score,
+                    winnerPayout: winnerResult.winnerPayout,
+                    platformCut: winnerResult.platformCut,
+                    payoutStatus
+                });
+            }
+
+            room.locked = true;
+            socket.emit('tournamentScoreAccepted', {
+                roomName,
+                score,
+                tournament
+            });
+            sendRoomState(roomName);
+            sendRoomList();
+        } catch (err) {
+            socket.emit('roomError', { message: err.message || 'could not submit tournament score' });
+        }
     });
 
     socket.on('disconnect', () => {

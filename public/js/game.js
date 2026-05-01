@@ -36,6 +36,8 @@ let socket = null;
 let gameMode = 'singleplayer';
 let playerRole = null;
 let currentRoom = null;
+let currentRoomType = 'standard';
+let currentTournament = null;
 let gameOverSent = false;
 let remoteState = null;
 let spectatorBoards = {};
@@ -46,6 +48,7 @@ let activeRooms = [];
 let selectedRoomName = '';
 let isRoomCreator = false;
 let uiScale = 1;
+let pieceRandom = Math.random;
 
 function byId(id) {
   return document.getElementById(id);
@@ -53,6 +56,33 @@ function byId(id) {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+function isTournamentMode() {
+  return gameMode === 'tournament';
+}
+
+function getSelectedRoom() {
+  return activeRooms.find(room => room.roomName === selectedRoomName) || null;
+}
+
+function createSeededRandom(seed) {
+  let state = (Number(seed) || 1) >>> 0;
+  if (!state) state = 1;
+
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+}
+
+function resetPieceRandom() {
+  if (isTournamentMode() && currentTournament && currentTournament.seed) {
+    pieceRandom = createSeededRandom(currentTournament.seed);
+    return;
+  }
+
+  pieceRandom = Math.random;
 }
 
 function saveUiScale() {
@@ -128,12 +158,101 @@ function setWatchLabel(message) {
   if (el) el.innerText = message || 'Waiting';
 }
 
+function renderTournamentResults() {
+  const wrap = byId('tournament-results');
+  const meta = byId('tournament-meta');
+  const board = byId('tournament-leaderboard');
+  if (!wrap || !meta || !board) return;
+
+  if (!currentTournament) {
+    wrap.style.display = 'none';
+    meta.innerText = 'No tournament selected.';
+    board.innerHTML = '<div class="room-empty">No tournament data yet</div>';
+    return;
+  }
+
+  wrap.style.display = 'block';
+
+  const stateText = currentTournament.finishedAt
+    ? `${currentTournament.payoutStatus === 'paid' ? 'winner paid' : 'winner pending'} ${currentTournament.winnerPayout} / platform kept ${currentTournament.platformCut}`
+    : (currentTournament.isLocked ? 'locked and accepting scores' : 'waiting for creator start');
+
+  meta.innerText = `entry ${currentTournament.entryFee} | pool ${currentTournament.prizePool} | ${currentTournament.submittedPlayers}/${currentTournament.playerCount} scores | ${stateText}`;
+
+  if (!currentTournament.leaderboard || !currentTournament.leaderboard.length) {
+    board.innerHTML = '<div class="room-empty">No tournament data yet</div>';
+    return;
+  }
+
+  board.innerHTML = currentTournament.leaderboard.map((entry, index) => {
+    const isWinner = currentTournament.winnerUserId && currentTournament.winnerUserId === entry.userId;
+    const scoreText = entry.score == null ? 'waiting' : entry.score;
+    return `
+      <div class="leader-row${isWinner ? ' winner' : ''}">
+        <span>#${index + 1}</span>
+        <span>${entry.username}</span>
+        <span>${scoreText}</span>
+      </div>
+    `;
+  }).join('');
+}
+
+function setCurrentTournament(tournament) {
+  currentTournament = tournament || null;
+  renderTournamentResults();
+}
+
+function toggleRoomTypeFields() {
+  const showTournamentFields = byId('room-type').value === 'tournament';
+  const fields = byId('tournament-create-fields');
+  if (fields) {
+    fields.style.display = showTournamentFields ? 'grid' : 'none';
+  }
+}
+
+function getPrimaryButtonLabel() {
+  if (gameMode === 'spectator') {
+    return 'WATCH';
+  }
+
+  if (isTournamentMode()) {
+    if (!currentTournament) {
+      return 'TOURNAMENT';
+    }
+
+    if (currentTournament.finishedAt || currentTournament.hasSubmitted) {
+      return 'RESULTS READY';
+    }
+
+    if (currentTournament.isLocked) {
+      return 'PLAY TOURNAMENT';
+    }
+
+    return isRoomCreator ? 'START TOURNAMENT' : 'WAITING FOR START';
+  }
+
+  if (gameMode === 'multiplayer') {
+    return 'START ROOM GAME';
+  }
+
+  return 'PLAY SINGLEPLAYER';
+}
+
 function updateStartButton() {
   const button = byId('start-room-btn');
   if (!button) return;
 
-  const showButton = gameState === 'MENU' && gameMode === 'multiplayer' && playerRole === 'player' && isRoomCreator;
+  const showButton = gameState === 'MENU'
+    && playerRole === 'player'
+    && isRoomCreator
+    && (
+      gameMode === 'multiplayer'
+      || (isTournamentMode() && currentTournament && !currentTournament.isLocked)
+    );
   button.style.display = showButton ? 'block' : 'none';
+  if (showButton) {
+    button.innerText = isTournamentMode() ? 'Start Tournament' : 'Start Game';
+  }
 }
 
 function updatePrimaryButton() {
@@ -142,10 +261,13 @@ function updatePrimaryButton() {
 
   const hidePrimary = gameMode === 'multiplayer' && playerRole === 'player' && gameState !== 'PAUSED';
   button.style.display = hidePrimary ? 'none' : 'block';
+  button.innerText = getPrimaryButtonLabel();
 }
 
 function resetRoomState() {
   currentRoom = null;
+  currentRoomType = 'standard';
+  currentTournament = null;
   playerRole = null;
   remoteState = null;
   spectatorBoards = {};
@@ -155,6 +277,7 @@ function resetRoomState() {
   selectedRoomName = '';
   onlineMenuOpen = false;
   setWatchLabel('Waiting');
+  renderTournamentResults();
 }
 
 function showRoomInputs(show) {
@@ -165,20 +288,25 @@ function showRoomInputs(show) {
 function updateModeUi() {
   const isSpectator = gameMode === 'spectator';
   const roomLine = currentRoom
-    ? `${currentRoom} (${playerRole || 'singleplayer'})`
+    ? (isTournamentMode() && currentTournament
+      ? `${currentRoom} (tournament ${currentTournament.isLocked ? 'locked' : 'open'})`
+      : `${currentRoom} (${playerRole || 'singleplayer'})`)
     : (onlineMenuOpen ? 'Browsing online rooms' : 'Singleplayer only');
   setRoomInfo(roomLine);
   showRoomInputs(gameState === 'MENU' && onlineMenuOpen);
   byId('room-password').disabled = gameState === 'PLAYING' && !isSpectator;
   byId('online-btn').style.display = gameState === 'MENU' ? 'block' : 'none';
-  byId('remote-wrap').style.display = (gameMode === 'multiplayer' || isSpectator) ? 'block' : 'none';
+  byId('remote-wrap').style.display = (gameMode === 'multiplayer' || (isSpectator && currentRoomType !== 'tournament')) ? 'block' : 'none';
   byId('watching-line').style.display = isSpectator ? 'block' : 'none';
   updateStartButton();
   updatePrimaryButton();
+  renderTournamentResults();
 }
 
 function clearRoomForm() {
   byId('room-password').value = '';
+  byId('tournament-pin').value = '';
+  byId('join-pin').value = '';
 }
 
 function setSelectedRoom(roomName) {
@@ -204,20 +332,26 @@ function renderRoomList() {
     }
     card.onclick = () => {
       setSelectedRoom(room.roomName);
-      tryJoinRoom(room.roomName, false);
     };
 
-    const modeText = room.playerCount >= 2 ? 'full room' : 'join as player';
+    const isTournament = room.roomType === 'tournament';
+    const modeText = isTournament
+      ? (room.locked ? 'locked bracket' : 'join tournament')
+      : (room.playerCount >= 2 ? 'full room' : 'join as player');
+    const rightText = isTournament
+      ? `${room.submittedPlayers || 0}/${room.playerCount} scored`
+      : `${room.spectatorCount} watch`;
     card.innerHTML = `
       <div class="room-card-top">
         <span>${room.roomName}</span>
-        <span>${room.passwordProtected ? 'LOCK' : 'OPEN'}</span>
+        <span>${isTournament ? 'TOURNAMENT' : (room.passwordProtected ? 'LOCK' : 'OPEN')}</span>
       </div>
       <div class="room-card-bottom">
-        <span>${room.playerCount}/2 players</span>
+        <span>${isTournament ? `${room.playerCount} entrants` : `${room.playerCount}/2 players`}</span>
         <span>${modeText}</span>
-        <span>${room.spectatorCount} watch</span>
+        <span>${rightText}</span>
       </div>
+      ${isTournament ? `<div class="room-card-bottom" style="margin-top:6px;"><span>entry ${room.entryFee}</span><span>pool ${room.prizePool}</span><span>${room.passwordProtected ? 'code' : 'open'}</span></div>` : ''}
       <div style="display:flex; justify-content:flex-end; margin-top:6px;">
         <button class="tiny-btn dark room-spectate-btn">WATCH</button>
       </div>
@@ -290,11 +424,15 @@ function initSocket() {
     currentRoom = data.roomName;
     playerRole = 'player';
     isRoomCreator = !!(data && data.isCreator);
-    gameMode = 'multiplayer';
+    currentRoomType = data && data.roomType ? data.roomType : 'standard';
+    setCurrentTournament(data && data.tournament ? data.tournament : null);
+    gameMode = currentRoomType === 'tournament' ? 'tournament' : 'multiplayer';
     onlineMenuOpen = false;
     setRoomInfo(`${data.roomName} (player)`);
     setSelectedRoom(data.roomName);
-    setStatus(data.passwordProtected ? `room made: ${data.roomName} (locked)` : `room made: ${data.roomName}`);
+    setStatus(currentRoomType === 'tournament'
+      ? `tournament room made: ${data.roomName}`
+      : (data.passwordProtected ? `room made: ${data.roomName} (locked)` : `room made: ${data.roomName}`));
     showMenuOverlay(`room ready: ${data.roomName}`);
   });
 
@@ -302,7 +440,11 @@ function initSocket() {
     currentRoom = data.roomName;
     playerRole = data.role;
     isRoomCreator = !!(data && data.isCreator);
-    gameMode = data.role === 'spectator' ? 'spectator' : 'multiplayer';
+    currentRoomType = data && data.roomType ? data.roomType : 'standard';
+    setCurrentTournament(data && data.tournament ? data.tournament : null);
+    gameMode = data.role === 'spectator'
+      ? 'spectator'
+      : (currentRoomType === 'tournament' ? 'tournament' : 'multiplayer');
     onlineMenuOpen = false;
     setRoomInfo(`${data.roomName} (${data.role})`);
     setSelectedRoom(data.roomName);
@@ -310,7 +452,9 @@ function initSocket() {
     if (data.role === 'spectator') {
       startSpectating();
     } else {
-      setStatus(`joined ${data.roomName} as player`);
+      setStatus(currentRoomType === 'tournament'
+        ? `joined tournament ${data.roomName}`
+        : `joined ${data.roomName} as player`);
       showMenuOverlay(`joined ${data.roomName}`);
     }
   });
@@ -318,12 +462,32 @@ function initSocket() {
   socket.on('roomState', data => {
     if (!data || !data.roomName) return;
 
-    isRoomCreator = data.creatorSocketId === (socket && socket.id);
+    if (currentRoom === data.roomName) {
+      currentRoomType = data.roomType || currentRoomType;
+      isRoomCreator = data.creatorUserId === playerProfile.userId;
+      if (data.tournament) {
+        const currentEntry = data.tournament.leaderboard.find(entry => entry.userId === playerProfile.userId);
+        setCurrentTournament({
+          ...data.tournament,
+          hasSubmitted: !!(currentEntry && currentEntry.score != null)
+        });
+      } else {
+        setCurrentTournament(null);
+      }
+    }
 
-    const playerNames = (data.players || []).map(player => player.username).filter(Boolean);
-    const playerText = playerNames.length ? playerNames.join(' vs ') : 'waiting for players';
-    const watcherText = data.spectators === 1 ? '1 spectator' : `${data.spectators} spectators`;
-    setStatus(`${data.roomName}: ${playerText} | ${watcherText}`);
+    if (data.roomType === 'tournament' && data.tournament) {
+      const tournament = data.tournament;
+      const winnerText = tournament.finishedAt && tournament.winnerUsername
+        ? ` | winner ${tournament.winnerUsername}`
+        : '';
+      setStatus(`${data.roomName}: ${tournament.playerCount} entered | pool ${tournament.prizePool} | ${tournament.submittedPlayers}/${tournament.playerCount} scores${winnerText}`);
+    } else {
+      const playerNames = (data.players || []).map(player => player.username).filter(Boolean);
+      const playerText = playerNames.length ? playerNames.join(' vs ') : 'waiting for players';
+      const watcherText = data.spectators === 1 ? '1 spectator' : `${data.spectators} spectators`;
+      setStatus(`${data.roomName}: ${playerText} | ${watcherText}`);
+    }
     updateModeUi();
   });
 
@@ -347,7 +511,15 @@ function initSocket() {
       return;
     }
 
-    if (gameMode === 'multiplayer' && playerRole === 'player') {
+    if (data && data.roomType === 'tournament' && currentTournament) {
+      setCurrentTournament({
+        ...currentTournament,
+        isLocked: true,
+        seed: data.seed
+      });
+    }
+
+    if ((gameMode === 'multiplayer' || gameMode === 'tournament') && playerRole === 'player') {
       startGame();
     }
   });
@@ -396,6 +568,16 @@ function initSocket() {
     setStatus(data && data.message ? data.message : 'room error');
   });
 
+  socket.on('tournamentScoreAccepted', data => {
+    if (data && data.tournament) {
+      setCurrentTournament({
+        ...data.tournament,
+        hasSubmitted: true
+      });
+    }
+    showMenuOverlay(data ? `score submitted: ${data.score}` : 'score submitted');
+  });
+
   socket.on('disconnect', () => {
     const hadRoom = !!currentRoom;
     resetRoomState();
@@ -423,7 +605,14 @@ function createRoomClicked() {
   initSocket();
   if (!socket) return;
   leaveRoom();
-  socket.emit('createRoom', { password: byId('room-password').value });
+  const roomType = byId('room-type').value;
+  socket.emit('createRoom', {
+    roomType,
+    password: byId('room-password').value,
+    entryFee: byId('tournament-entry-fee').value,
+    bonusContribution: byId('tournament-bonus').value,
+    pin: byId('tournament-pin').value
+  });
   clearRoomForm();
 }
 
@@ -441,6 +630,11 @@ function tryJoinRoom(roomName, forceSpectate) {
   if (!socket) return;
   leaveRoom();
 
+  const room = activeRooms.find(item => item.roomName === targetRoom);
+  const joinPin = room && room.roomType === 'tournament' && !forceSpectate
+    ? byId('join-pin').value
+    : '';
+
   if (forceSpectate) {
     socket.emit('spectateRoom', {
       roomName: targetRoom,
@@ -449,9 +643,14 @@ function tryJoinRoom(roomName, forceSpectate) {
   } else {
     socket.emit('joinRoom', {
       roomName: targetRoom,
-      password
+      password,
+      pin: joinPin
     });
   }
+}
+
+function joinSelectedRoom() {
+  tryJoinRoom(selectedRoomName, false);
 }
 
 function chooseSingleplayer() {
@@ -591,6 +790,7 @@ function startGame() {
   pieceQueue = [];
   remoteState = null;
   resetRunStats();
+  resetPieceRandom();
   fillPieceQueue();
   try {
     sounds.bgm.play();
@@ -603,7 +803,7 @@ function startGame() {
   playerReset();
   updateModeUi();
 
-  if (socket && currentRoom && playerRole === 'player') {
+  if (socket && currentRoom && playerRole === 'player' && gameMode === 'multiplayer') {
     socket.emit('playerReady');
     sendStateUpdate(false);
   }
@@ -630,6 +830,32 @@ function handlePrimaryBtn() {
     return;
   }
 
+  if (isTournamentMode()) {
+    if (!currentTournament) {
+      setStatus('no tournament loaded');
+      return;
+    }
+
+    if (currentTournament.finishedAt || currentTournament.hasSubmitted) {
+      setStatus(currentTournament.winnerUsername
+        ? `winner: ${currentTournament.winnerUsername}`
+        : 'score already submitted');
+      return;
+    }
+
+    if (!currentTournament.isLocked) {
+      if (!isRoomCreator) {
+        setStatus('waiting for tournament creator to start');
+        return;
+      }
+      requestRoomStart();
+      return;
+    }
+
+    startGame();
+    return;
+  }
+
   if (gameMode === 'multiplayer') {
     if (!isRoomCreator) {
       setStatus('waiting for room creator to start');
@@ -645,7 +871,7 @@ function handlePrimaryBtn() {
 function requestRoomStart() {
   if (!socket || !currentRoom || playerRole !== 'player' || !isRoomCreator) return;
   socket.emit('startGame');
-  setStatus('starting room...');
+  setStatus(isTournamentMode() ? 'locking tournament...' : 'starting room...');
 }
 
 function canPauseGame() {
@@ -670,7 +896,7 @@ function showLoseOverlay(text) {
   byId('settings-panel').style.display = 'none';
   byId('companion-panel').style.display = 'none';
   byId('primary-btn').onclick = handlePrimaryBtn;
-  byId('primary-btn').innerText = gameMode === 'spectator' ? 'WATCH' : 'PLAY AGAIN';
+  byId('primary-btn').innerText = isTournamentMode() ? 'RESULTS READY' : (gameMode === 'spectator' ? 'WATCH' : 'PLAY AGAIN');
   byId('restart-btn').style.display = 'block';
   setStatus(text);
   updateModeUi();
@@ -687,7 +913,7 @@ function showMenuOverlay(text) {
   byId('settings-panel').style.display = 'none';
   byId('companion-panel').style.display = 'none';
   byId('primary-btn').onclick = handlePrimaryBtn;
-  byId('primary-btn').innerText = gameMode === 'spectator' ? 'WATCH' : (gameMode === 'multiplayer' ? 'START ROOM GAME' : 'PLAY SINGLEPLAYER');
+  byId('primary-btn').innerText = getPrimaryButtonLabel();
   byId('restart-btn').style.display = currentRoom ? 'block' : 'none';
   setStatus(text);
   updateModeUi();
@@ -695,6 +921,21 @@ function showMenuOverlay(text) {
 
 function handleLocalGameOver() {
   if (gameState === 'GAMEOVER') return;
+  if (isTournamentMode() && !gameOverSent && socket && currentRoom && playerRole === 'player') {
+    if (currentTournament) {
+      setCurrentTournament({
+        ...currentTournament,
+        hasSubmitted: true
+      });
+    }
+    socket.emit('submitTournamentScore', {
+      score: player.score
+    });
+    gameOverSent = true;
+    showMenuOverlay('submitting tournament score...');
+    return;
+  }
+
   if (!gameOverSent && socket && currentRoom && playerRole === 'player') {
     socket.emit('gameOver');
     gameOverSent = true;
@@ -857,6 +1098,8 @@ window.addEventListener('resize', applyUiScale);
 initColorPickers();
 populateCompanions();
 loadUiScale();
+toggleRoomTypeFields();
+renderTournamentResults();
 updateScoreUi();
 setStatus('singleplayer ready');
 setRoomInfo('Singleplayer only');

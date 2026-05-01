@@ -39,6 +39,7 @@ Edit `.env` and set the values for your deployment. The important ones are:
 - **FORMBAR_URL**: Base URL of your Formbar instance (e.g. `https://formbar.yourdomain.com`).
 - **THIS_URL**: Public URL for this app (e.g. `https://localhost:3000` while developing).
 - **PAYUSER**: Formbar user ID that will receive Digipog payments.
+- **PAYUSER_PIN**: PIN for the platform payout wallet. Needed for tournament winner payouts.
 - **ENTRYFEE**: How many Digipogs it costs to play.
 - **SECRET**: Session secret for this app. Set this to any strong random value for your deployment.
 
@@ -65,5 +66,14 @@ If login succeeds on Formbar but this app responds with `invalid login token`, t
    - **Space**: Hard drop.
    - **C**: Hold piece.
    - **P**: Pause / resume.
+
+### Tournament mode
+
+- Tournament rooms are created from the in-game online room menu.
+- Tournament entry fee must be at least `120` Digipogs.
+- Joining a tournament charges the stored entry fee once per Formbar account.
+- When the creator starts the tournament, all entrants play the same seeded piece order.
+- Scores are submitted back to the server and the highest score wins.
+- Winner payout is `65%` of the server-tracked pool, with `35%` retained by the platform.
 
 Static assets (Tetris, GIFs, music) live in the `public` folder and are served automatically by Express.
