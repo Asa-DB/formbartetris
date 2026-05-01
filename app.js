@@ -110,6 +110,7 @@ function setLocalDevSession(req) {
     req.session.userId = user.id || 1;
     req.session.refreshToken = null;
     req.session.hasPaid = false;
+    saveUser(req.session.userId, req.session.user);
 }
 
 function isLocalDevSession(req) {
@@ -232,7 +233,7 @@ function isAuthenticated(req, res, next) {
             clearSession(req);
 
             if (err.name === 'TokenExpiredError' && refreshToken) {
-                return res.redirect(`${formbarAddress}/oauth?refreshToken=${refreshToken}&redirectURL=${thisUrl}`);
+                return res.redirect(`${formbarAddress}/oauth?refreshToken=${refreshToken}&redirectURL=${thisUrlLogin}`);
             }
 
             return redirectToLogin(res);
@@ -415,6 +416,35 @@ function isUserAlreadyInRoom(room, userId) {
     return getConnectedPlayerUserIds(room).includes(userId);
 }
 
+function assignStandardRoomCreator(room) {
+    if (!room || isTournamentRoom(room)) {
+        return;
+    }
+
+    const currentCreatorSocket = room.creatorSocketId
+        ? io.sockets.sockets.get(room.creatorSocketId)
+        : null;
+
+    if (currentCreatorSocket && room.players.includes(room.creatorSocketId)) {
+        room.creatorUserId = currentCreatorSocket.data.userId;
+        room.creatorUsername = currentCreatorSocket.data.username;
+        return;
+    }
+
+    const nextCreatorSocketId = room.players.find(socketId => io.sockets.sockets.get(socketId)) || null;
+    room.creatorSocketId = nextCreatorSocketId;
+
+    if (!nextCreatorSocketId) {
+        room.creatorUserId = null;
+        room.creatorUsername = null;
+        return;
+    }
+
+    const nextCreatorSocket = io.sockets.sockets.get(nextCreatorSocketId);
+    room.creatorUserId = nextCreatorSocket.data.userId;
+    room.creatorUsername = nextCreatorSocket.data.username;
+}
+
 io.use(wrapExpressMiddleware(sessionMiddleware));
 
 function makeRoomName() {
@@ -520,18 +550,7 @@ function removeSocketFromRoom(socket) {
     room.spectators = room.spectators.filter(id => id !== socket.id);
 
     if (room.creatorSocketId === socket.id) {
-        if (isTournamentRoom(room)) {
-            room.creatorSocketId = null;
-        } else {
-            room.creatorSocketId = room.players[0] || null;
-            if (room.creatorSocketId) {
-                const nextCreatorSocket = io.sockets.sockets.get(room.creatorSocketId);
-                if (nextCreatorSocket) {
-                    room.creatorUserId = nextCreatorSocket.data.userId;
-                    room.creatorUsername = nextCreatorSocket.data.username;
-                }
-            }
-        }
+        room.creatorSocketId = null;
     }
 
     socket.leave(roomName);
@@ -539,12 +558,16 @@ function removeSocketFromRoom(socket) {
     if (!isTournamentRoom(room) && room.players.length === 0 && room.spectators.length === 0) {
         delete rooms[roomName];
     } else {
-        const replacementSocketId = room.players.find(socketId => {
-            const playerSocket = io.sockets.sockets.get(socketId);
-            return playerSocket && playerSocket.data.userId === room.creatorUserId;
-        });
-        if (replacementSocketId) {
-            room.creatorSocketId = replacementSocketId;
+        if (isTournamentRoom(room)) {
+            const replacementSocketId = room.players.find(socketId => {
+                const playerSocket = io.sockets.sockets.get(socketId);
+                return playerSocket && playerSocket.data.userId === room.creatorUserId;
+            });
+            if (replacementSocketId) {
+                room.creatorSocketId = replacementSocketId;
+            }
+        } else {
+            assignStandardRoomCreator(room);
         }
         io.to(roomName).emit('roomState', getRoomInfo(roomName));
     }
@@ -792,6 +815,7 @@ io.on('connection', socket => {
         const role = room.players.length < 2 ? 'player' : 'spectator';
         if (role === 'player') {
             room.players.push(socket.id);
+            assignStandardRoomCreator(room);
         } else {
             room.spectators.push(socket.id);
         }
