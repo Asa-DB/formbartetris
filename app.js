@@ -406,6 +406,10 @@ function normalizeRoomType(value) {
     return value === 'tournament' ? 'tournament' : 'standard';
 }
 
+function sameUserId(a, b) {
+    return String(a) === String(b);
+}
+
 function getConnectedPlayerUserIds(room) {
     return room.players
         .map(socketId => io.sockets.sockets.get(socketId))
@@ -750,12 +754,12 @@ io.on('connection', socket => {
             return;
         }
 
-        if (isUserAlreadyInRoom(room, socket.data.userId)) {
-            socket.emit('roomError', { message: 'you are already in this room' });
-            return;
-        }
-
         if (isTournamentRoom(room)) {
+            if (isUserAlreadyInRoom(room, socket.data.userId)) {
+                socket.emit('roomError', { message: 'you are already in this room' });
+                return;
+            }
+
             const tournament = tournamentManager.getTournamentState(room.tournamentId);
             const existingEntry = tournamentManager.getTournamentEntry(room.tournamentId, socket.data.userId);
             const pin = data && typeof data.pin === 'string' ? data.pin : '';
@@ -786,7 +790,7 @@ io.on('connection', socket => {
                     }
 
                     room.players.push(socket.id);
-                    if (socket.data.userId === room.creatorUserId) {
+                    if (sameUserId(socket.data.userId, room.creatorUserId)) {
                         room.creatorSocketId = socket.id;
                     }
 
@@ -800,7 +804,7 @@ io.on('connection', socket => {
                         roomType: 'tournament',
                         role: 'player',
                         creatorSocketId: room.creatorSocketId || null,
-                        isCreator: room.creatorUserId === socket.data.userId,
+                        isCreator: sameUserId(room.creatorUserId, socket.data.userId),
                         tournament: tournamentManager.getTournamentState(room.tournamentId)
                     });
 
@@ -831,7 +835,7 @@ io.on('connection', socket => {
             roomType: room.roomType || 'standard',
             role,
             creatorSocketId: room.creatorSocketId || null,
-            isCreator: room.creatorUserId === socket.data.userId
+            isCreator: sameUserId(room.creatorUserId, socket.data.userId)
         });
 
         sendRoomState(roomName);
@@ -885,7 +889,7 @@ io.on('connection', socket => {
         if (!roomName || socket.data.roomRole !== 'player' || !rooms[roomName]) return;
 
         const room = rooms[roomName];
-        if (room.creatorUserId !== socket.data.userId) {
+        if (!sameUserId(room.creatorUserId, socket.data.userId)) {
             socket.emit('roomError', { message: 'only the room creator can start' });
             return;
         }

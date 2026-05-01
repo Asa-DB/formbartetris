@@ -58,6 +58,10 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+function sameUserId(a, b) {
+  return String(a) === String(b);
+}
+
 function isTournamentMode() {
   return gameMode === 'tournament';
 }
@@ -202,6 +206,20 @@ function setCurrentTournament(tournament) {
   renderTournamentResults();
 }
 
+function applyCurrentRoomMode(role, roomType, tournament) {
+  currentRoomType = roomType || 'standard';
+  setCurrentTournament(tournament);
+
+  if (role === 'spectator') {
+    gameMode = 'spectator';
+    return;
+  }
+
+  gameMode = currentRoomType === 'tournament' && currentTournament
+    ? 'tournament'
+    : 'multiplayer';
+}
+
 function toggleRoomTypeFields() {
   const showTournamentFields = byId('room-type').value === 'tournament';
   const fields = byId('tournament-create-fields');
@@ -332,6 +350,9 @@ function renderRoomList() {
     }
     card.onclick = () => {
       setSelectedRoom(room.roomName);
+      if (room.roomType !== 'tournament' && !room.passwordProtected && room.playerCount < 2) {
+        tryJoinRoom(room.roomName, false);
+      }
     };
 
     const isTournament = room.roomType === 'tournament';
@@ -424,9 +445,7 @@ function initSocket() {
     currentRoom = data.roomName;
     playerRole = 'player';
     isRoomCreator = !!(data && data.isCreator);
-    currentRoomType = data && data.roomType ? data.roomType : 'standard';
-    setCurrentTournament(data && data.tournament ? data.tournament : null);
-    gameMode = currentRoomType === 'tournament' ? 'tournament' : 'multiplayer';
+    applyCurrentRoomMode('player', data && data.roomType, data && data.tournament);
     onlineMenuOpen = false;
     setRoomInfo(`${data.roomName} (player)`);
     setSelectedRoom(data.roomName);
@@ -440,11 +459,7 @@ function initSocket() {
     currentRoom = data.roomName;
     playerRole = data.role;
     isRoomCreator = !!(data && data.isCreator);
-    currentRoomType = data && data.roomType ? data.roomType : 'standard';
-    setCurrentTournament(data && data.tournament ? data.tournament : null);
-    gameMode = data.role === 'spectator'
-      ? 'spectator'
-      : (currentRoomType === 'tournament' ? 'tournament' : 'multiplayer');
+    applyCurrentRoomMode(data.role, data && data.roomType, data && data.tournament);
     onlineMenuOpen = false;
     setRoomInfo(`${data.roomName} (${data.role})`);
     setSelectedRoom(data.roomName);
@@ -463,17 +478,14 @@ function initSocket() {
     if (!data || !data.roomName) return;
 
     if (currentRoom === data.roomName) {
-      currentRoomType = data.roomType || currentRoomType;
-      isRoomCreator = data.creatorUserId === playerProfile.userId;
-      if (data.tournament) {
-        const currentEntry = data.tournament.leaderboard.find(entry => entry.userId === playerProfile.userId);
-        setCurrentTournament({
-          ...data.tournament,
-          hasSubmitted: !!(currentEntry && currentEntry.score != null)
-        });
-      } else {
-        setCurrentTournament(null);
-      }
+      isRoomCreator = sameUserId(data.creatorUserId, playerProfile.userId);
+      const tournament = data.tournament
+        ? {
+            ...data.tournament,
+            hasSubmitted: !!data.tournament.leaderboard.find(entry => sameUserId(entry.userId, playerProfile.userId) && entry.score != null)
+          }
+        : null;
+      applyCurrentRoomMode(playerRole, data.roomType || currentRoomType, tournament);
     }
 
     if (data.roomType === 'tournament' && data.tournament) {
@@ -634,6 +646,7 @@ function tryJoinRoom(roomName, forceSpectate) {
   const joinPin = room && room.roomType === 'tournament' && !forceSpectate
     ? byId('join-pin').value
     : '';
+  setStatus(forceSpectate ? `watching ${targetRoom}...` : `joining ${targetRoom}...`);
 
   if (forceSpectate) {
     socket.emit('spectateRoom', {
@@ -1085,7 +1098,14 @@ function handlePrimaryBtn() {
 }
 
 function requestRoomStart() {
-  if (!socket || !currentRoom || playerRole !== 'player' || !isRoomCreator) return;
+  if (!currentRoom || playerRole !== 'player') {
+    setStatus('join a room first');
+    return;
+  }
+  if (!socket) {
+    setStatus('offline');
+    return;
+  }
   socket.emit('startGame');
   setStatus(isTournamentMode() ? 'locking tournament...' : 'starting room...');
 }
