@@ -26,6 +26,7 @@ This installs the runtime packages used by the app:
 - `express-session`
 - `jsonwebtoken`
 - `socket.io`
+- `sharp`
 
 Then create your environment file by copying the template:
 
