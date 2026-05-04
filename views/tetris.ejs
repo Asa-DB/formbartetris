@@ -462,6 +462,11 @@
       justify-content: center;
       padding: 24px 16px;
       background: rgba(3, 7, 11, 0.9);
+      transition: background 180ms ease;
+    }
+
+    #overlay.forty-line-results-overlay {
+      background: rgba(3, 7, 11, 0.76);
     }
 
     .menu-card {
@@ -477,6 +482,60 @@
     .menu-card h1,
     .menu-card h3 {
       margin: 0;
+    }
+
+    body,
+    .menu-card,
+    .menu-popout,
+    .controls-groups,
+    #room-list {
+      scrollbar-width: thin;
+      scrollbar-color: #476675 #0c151d;
+    }
+
+    body::-webkit-scrollbar,
+    .menu-card::-webkit-scrollbar,
+    .menu-popout::-webkit-scrollbar,
+    .controls-groups::-webkit-scrollbar,
+    #room-list::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+
+    body::-webkit-scrollbar-track,
+    .menu-card::-webkit-scrollbar-track,
+    .menu-popout::-webkit-scrollbar-track,
+    .controls-groups::-webkit-scrollbar-track,
+    #room-list::-webkit-scrollbar-track {
+      background: #0c151d;
+      border-left: 2px solid #17242d;
+    }
+
+    body::-webkit-scrollbar-thumb,
+    .menu-card::-webkit-scrollbar-thumb,
+    .menu-popout::-webkit-scrollbar-thumb,
+    .controls-groups::-webkit-scrollbar-thumb,
+    #room-list::-webkit-scrollbar-thumb {
+      background: linear-gradient(180deg, #365567, #28414f);
+      border: 2px solid #0c151d;
+      border-radius: 999px;
+      transition: background 140ms ease;
+    }
+
+    body::-webkit-scrollbar-thumb:hover,
+    .menu-card::-webkit-scrollbar-thumb:hover,
+    .menu-popout::-webkit-scrollbar-thumb:hover,
+    .controls-groups::-webkit-scrollbar-thumb:hover,
+    #room-list::-webkit-scrollbar-thumb:hover {
+      background: linear-gradient(180deg, #4a7086, #355261);
+    }
+
+    body::-webkit-scrollbar-thumb:active,
+    .menu-card::-webkit-scrollbar-thumb:active,
+    .menu-popout::-webkit-scrollbar-thumb:active,
+    .controls-groups::-webkit-scrollbar-thumb:active,
+    #room-list::-webkit-scrollbar-thumb:active {
+      background: linear-gradient(180deg, #58a39f, #3d6c6b);
     }
 
     .hero-title {
@@ -510,6 +569,32 @@
       background: #0d171e;
     }
 
+    .menu-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .menu-summary-card {
+      padding: 10px;
+      border: 3px solid var(--frame);
+      background: var(--panel-alt);
+    }
+
+    .menu-summary-value {
+      color: var(--accent);
+      font-size: 0.82rem;
+      line-height: 1.4;
+    }
+
+    .quick-stats-line {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 0.56rem;
+      line-height: 1.8;
+    }
+
     .room-text {
       margin: 8px 0 0;
       color: var(--muted);
@@ -522,6 +607,158 @@
       display: flex;
       flex-direction: column;
       gap: 10px;
+    }
+
+    .forty-line-results-modal {
+      display: none;
+      flex-direction: column;
+      width: min(92vw, calc(84vh * 1.45), 720px);
+      max-width: 720px;
+      aspect-ratio: 16 / 11;
+      max-height: 84vh;
+      padding: clamp(18px, 3vh, 28px);
+      border: 4px solid var(--frame);
+      background:
+        linear-gradient(180deg, rgba(28, 46, 58, 0.96), rgba(12, 21, 28, 0.98)),
+        #13212c;
+      box-shadow:
+        0 0 0 4px #000,
+        0 24px 48px rgba(0, 0, 0, 0.42);
+      overflow: hidden;
+      animation: fortyLineResultsEnter 240ms ease-out;
+    }
+
+    .forty-line-results-frame {
+      flex: 1;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: clamp(14px, 2.4vh, 22px);
+      min-height: 0;
+    }
+
+    .forty-line-results-header {
+      display: grid;
+      gap: 8px;
+      justify-items: center;
+      text-align: center;
+    }
+
+    .forty-line-results-kicker {
+      margin: 0;
+      color: var(--warning);
+      font-size: clamp(0.5rem, 1vh, 0.62rem);
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+    }
+
+    .forty-line-results-header h1 {
+      margin: 0;
+      color: var(--accent);
+      font-size: clamp(1.35rem, 3.4vh, 2.3rem);
+      letter-spacing: 0.1em;
+      line-height: 1.2;
+      text-shadow: 3px 3px 0 #000;
+    }
+
+    .forty-line-results-subtitle {
+      margin: 0;
+      color: var(--muted);
+      font-size: clamp(0.54rem, 1.1vh, 0.66rem);
+      line-height: 1.8;
+    }
+
+    .forty-line-results-body {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: 1fr auto;
+      gap: clamp(12px, 2vh, 18px);
+      align-content: center;
+    }
+
+    .forty-line-results-time-card {
+      min-height: 0;
+      padding: clamp(16px, 2.7vh, 22px);
+      border: 4px solid var(--frame);
+      background:
+        radial-gradient(circle at top, rgba(73, 242, 184, 0.16), transparent 58%),
+        #0d171e;
+      display: grid;
+      place-items: center;
+      gap: 10px;
+      text-align: center;
+      box-shadow: inset -4px -4px 0 #081118;
+    }
+
+    .forty-line-results-time {
+      color: var(--text);
+      font-size: clamp(1.65rem, 5.8vh, 3.4rem);
+      line-height: 1.1;
+      letter-spacing: 0.08em;
+      text-shadow: 4px 4px 0 #000;
+    }
+
+    .forty-line-results-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: clamp(10px, 1.7vh, 16px);
+    }
+
+    .forty-line-results-stat {
+      min-width: 0;
+      padding: clamp(12px, 2vh, 18px);
+      border: 3px solid var(--frame);
+      background: var(--panel-alt);
+      display: grid;
+      gap: 8px;
+      align-content: start;
+      box-shadow: inset -3px -3px 0 #17242d;
+    }
+
+    .forty-line-results-label {
+      color: var(--muted);
+      font-size: clamp(0.5rem, 1vh, 0.6rem);
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      line-height: 1.5;
+    }
+
+    .forty-line-results-value {
+      min-width: 0;
+      color: var(--text);
+      font-size: clamp(0.8rem, 2vh, 1.2rem);
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+
+    .forty-line-results-value.accent {
+      color: var(--accent);
+    }
+
+    .forty-line-results-note {
+      min-height: 1.8em;
+      margin: 0;
+      color: var(--muted);
+      font-size: clamp(0.5rem, 1vh, 0.62rem);
+      line-height: 1.7;
+      text-align: center;
+    }
+
+    .forty-line-results-actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    @keyframes fortyLineResultsEnter {
+      from {
+        opacity: 0;
+        transform: scale(0.94) translateY(10px);
+      }
+
+      to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+      }
     }
 
     .btn,
@@ -598,13 +835,185 @@
       line-height: 1.8;
     }
 
-    #online-panel {
+    .menu-popout {
       display: none;
-      margin-top: 14px;
-      padding: 14px;
-      border: 4px solid var(--frame);
-      background: #0d171e;
-      text-align: left;
+      width: min(640px, 100%);
+      max-height: min(88vh, 760px);
+      overflow-y: auto;
+      opacity: 0;
+      transform: translateY(16px) scale(0.97);
+      transition: opacity 180ms ease, transform 180ms ease;
+    }
+
+    .menu-popout.is-visible {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+
+    .menu-popout.is-closing {
+      opacity: 0;
+      transform: translateY(16px) scale(0.97);
+    }
+
+    .modal-topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .modal-topbar .section-heading {
+      margin-bottom: 0;
+      flex: 1;
+    }
+
+    .modal-close {
+      flex: 0 0 auto;
+      min-width: 88px;
+    }
+
+    .mode-switch {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .mode-switch-btn {
+      width: 100%;
+    }
+
+    .mode-switch-btn.is-active {
+      background: var(--accent);
+      color: #04110c;
+    }
+
+    .mode-switch-btn.is-inactive {
+      background: #2b404e;
+      color: var(--text);
+    }
+
+    .bot-mode-grid,
+    .difficulty-grid,
+    .controls-modal-grid {
+      display: grid;
+      gap: 10px;
+    }
+
+    .difficulty-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .controls-modal-grid {
+      grid-template-columns: minmax(0, 1fr);
+      align-items: start;
+    }
+
+    .mode-option-card {
+      padding: 12px;
+      border: 3px solid var(--frame);
+      background: var(--panel-alt);
+      box-shadow: inset -3px -3px 0 #17242d;
+    }
+
+    .mode-option-card strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 0.6rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .mode-option-card p {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 0.54rem;
+      line-height: 1.7;
+    }
+
+    .controls-modal-group {
+      height: auto;
+    }
+
+    .controls-modal-group .controls-list {
+      gap: 6px;
+    }
+
+    .controls-modal-group .controls-item {
+      padding: 8px 9px;
+      align-items: center;
+    }
+
+    .controls-modal-group .controls-key {
+      min-width: 96px;
+    }
+
+    .controls-editor {
+      display: grid;
+      gap: 12px;
+    }
+
+    .controls-modal-copy {
+      display: grid;
+      gap: 6px;
+    }
+
+    .controls-modal-copy span {
+      color: var(--muted);
+      font-size: 0.56rem;
+      line-height: 1.7;
+    }
+
+    .controls-groups {
+      display: grid;
+      gap: 10px;
+      max-height: min(56vh, 480px);
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+
+    .controls-key-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      background: #203645;
+      transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+    }
+
+    .controls-key-btn:hover,
+    .controls-key-btn:focus {
+      background: #29495c;
+      border-color: var(--accent);
+      outline: none;
+    }
+
+    .controls-key-btn.is-listening {
+      background: var(--accent);
+      border-color: #b2fff1;
+      color: #04110c;
+    }
+
+    .controls-footer {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .controls-footer-note {
+      color: var(--muted);
+      font-size: 0.54rem;
+      line-height: 1.7;
+    }
+
+    .modal-note {
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-size: 0.56rem;
+      line-height: 1.7;
     }
 
     .room-browser-top {
@@ -709,6 +1118,279 @@
       margin-top: 10px;
     }
 
+    .leaderboard-toolbar {
+      display: grid;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .leaderboard-search {
+      margin: 0;
+    }
+
+    #leaderboards-panel {
+      gap: 0;
+      overflow: hidden;
+    }
+
+    .leaderboard-tab-bar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .leaderboard-tab {
+      width: 100%;
+      min-height: 58px;
+      text-align: center;
+      line-height: 1.5;
+    }
+
+    .leaderboard-tab.active {
+      background: var(--accent);
+      color: #04110c;
+    }
+
+    .leaderboard-tab.inactive {
+      background: #2b404e;
+      color: var(--text);
+    }
+
+    .leaderboard-meta {
+      margin-bottom: 12px;
+      color: var(--muted);
+      font-size: 0.56rem;
+      line-height: 1.7;
+    }
+
+    .leaderboard-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      align-content: start;
+    }
+
+    .leaderboard-card {
+      appearance: none;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+      padding: 12px;
+      border: 3px solid var(--frame);
+      background: var(--panel-alt);
+      color: var(--text);
+      font-family: "Nes", monospace;
+      text-align: left;
+      cursor: pointer;
+      box-shadow: inset -3px -3px 0 #17242d;
+      transition: border-color 140ms ease, transform 140ms ease;
+    }
+
+    .leaderboard-card:hover {
+      border-color: var(--accent);
+      transform: translateY(-2px);
+    }
+
+    .leaderboard-avatar {
+      width: 44px;
+      height: 44px;
+      flex: 0 0 auto;
+      border: 3px solid var(--frame);
+      background: #08111a;
+      object-fit: cover;
+    }
+
+    .leaderboard-card-copy {
+      min-width: 0;
+      display: grid;
+      gap: 4px;
+    }
+
+    .leaderboard-card-name {
+      min-width: 0;
+      font-size: 0.62rem;
+      line-height: 1.6;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .leaderboard-card-hint {
+      color: var(--muted);
+      font-size: 0.5rem;
+      line-height: 1.5;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .leaderboard-pagination {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .leaderboard-page-copy {
+      color: var(--muted);
+      font-size: 0.56rem;
+      text-align: center;
+      line-height: 1.7;
+    }
+
+    .player-profile-popout {
+      position: fixed;
+      inset: 0;
+      z-index: 24;
+      display: none;
+      pointer-events: none;
+    }
+
+    .player-profile-popout.is-open,
+    .player-profile-popout.is-closing {
+      display: block;
+    }
+
+    .player-profile-backdrop {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      transition: opacity 180ms ease;
+      pointer-events: none;
+    }
+
+    .player-profile-card {
+      position: fixed;
+      top: var(--player-profile-top, 50%);
+      left: var(--player-profile-left, 50%);
+      width: min(360px, calc(100vw - 32px));
+      padding: 16px;
+      border: 4px solid var(--frame);
+      background:
+        linear-gradient(180deg, rgba(54, 94, 118, 0.28), transparent 36%),
+        #13212c;
+      box-shadow: 0 20px 44px rgba(0, 0, 0, 0.38), 0 0 0 4px #000;
+      opacity: 0;
+      transform: translate3d(var(--player-profile-shift-x, -50%), var(--player-profile-shift-y, -50%), 0) scale(0.96);
+      transition: opacity 180ms ease, transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+      pointer-events: auto;
+    }
+
+    .player-profile-popout.is-open .player-profile-card {
+      opacity: 1;
+      transform: translate3d(var(--player-profile-shift-x, -50%), var(--player-profile-shift-y, -50%), 0) scale(1);
+    }
+
+    .player-profile-popout.is-closing .player-profile-card {
+      opacity: 0;
+      transform: translate3d(var(--player-profile-shift-x, -50%), calc(var(--player-profile-shift-y, -50%) + 8px), 0) scale(0.97);
+    }
+
+    .player-profile-head {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      margin-bottom: 12px;
+    }
+
+    .player-profile-avatar {
+      width: 72px;
+      height: 72px;
+      flex: 0 0 auto;
+      border: 4px solid var(--frame);
+      background: #08111a;
+      object-fit: cover;
+    }
+
+    .player-profile-copy {
+      min-width: 0;
+      flex: 1 1 auto;
+      display: grid;
+      gap: 5px;
+      padding-top: 2px;
+    }
+
+    .player-profile-name {
+      font-size: 0.76rem;
+      line-height: 1.6;
+      word-break: break-word;
+    }
+
+    .player-profile-id {
+      color: var(--muted);
+      font-size: 0.54rem;
+      line-height: 1.6;
+    }
+
+    .player-profile-bio {
+      margin: 0 0 14px;
+      padding: 10px 11px;
+      border: 3px solid #355264;
+      background: rgba(8, 17, 26, 0.52);
+      color: #d6e5ef;
+      font-size: 0.54rem;
+      line-height: 1.8;
+      min-height: 58px;
+    }
+
+    .player-profile-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .player-profile-stat {
+      min-height: 82px;
+      padding: 10px;
+      border: 3px solid var(--frame);
+      background: var(--panel-alt);
+      display: grid;
+      align-content: space-between;
+      gap: 8px;
+    }
+
+    .player-profile-stat .stat-label {
+      margin: 0;
+    }
+
+    .player-profile-stat-value {
+      color: var(--accent);
+      font-size: 0.64rem;
+      line-height: 1.6;
+      word-break: break-word;
+    }
+
+    .player-profile-close {
+      align-self: flex-start;
+      min-width: 0;
+      padding-left: 10px;
+      padding-right: 10px;
+    }
+
+    @keyframes overlayFadeIn {
+      from {
+        opacity: 0;
+      }
+
+      to {
+        opacity: 1;
+      }
+    }
+
+    @keyframes modalPopIn {
+      from {
+        opacity: 0;
+        transform: scale(0.96);
+      }
+
+      to {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
+
     .leader-row {
       display: grid;
       grid-template-columns: auto 1fr auto;
@@ -803,6 +1485,138 @@
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 8px;
+    }
+
+    .profile-settings-card,
+    .directory-card {
+      padding: 12px;
+      border: 3px solid var(--frame);
+      background: var(--panel-alt);
+      box-shadow: inset -3px -3px 0 #17242d;
+    }
+
+    .profile-settings-shell,
+    .directory-shell {
+      display: grid;
+      gap: 14px;
+    }
+
+    .profile-settings-head {
+      display: flex;
+      gap: 14px;
+      align-items: center;
+    }
+
+    .profile-settings-avatar {
+      width: 76px;
+      height: 76px;
+      border: 4px solid var(--frame);
+      background: #08111a;
+      object-fit: cover;
+      flex: 0 0 auto;
+    }
+
+    .profile-settings-copy {
+      min-width: 0;
+      display: grid;
+      gap: 6px;
+    }
+
+    .profile-settings-copy strong {
+      font-size: 0.64rem;
+      line-height: 1.6;
+    }
+
+    .profile-settings-copy span {
+      color: var(--muted);
+      font-size: 0.54rem;
+      line-height: 1.7;
+    }
+
+    textarea.input {
+      min-height: 100px;
+      resize: vertical;
+      line-height: 1.8;
+    }
+
+    .field-note,
+    .save-note {
+      color: var(--muted);
+      font-size: 0.52rem;
+      line-height: 1.7;
+    }
+
+    .save-note {
+      min-height: 1.7em;
+    }
+
+    .directory-toolbar {
+      display: grid;
+      gap: 10px;
+    }
+
+    .directory-grid {
+      display: grid;
+      gap: 10px;
+    }
+
+    .directory-card {
+      appearance: none;
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      width: 100%;
+      color: var(--text);
+      font-family: "Nes", monospace;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .directory-card:hover {
+      border-color: var(--accent);
+    }
+
+    .directory-avatar {
+      width: 50px;
+      height: 50px;
+      border: 3px solid var(--frame);
+      background: #08111a;
+      object-fit: cover;
+      flex: 0 0 auto;
+    }
+
+    .directory-copy {
+      min-width: 0;
+      display: grid;
+      gap: 5px;
+      flex: 1 1 auto;
+    }
+
+    .directory-name-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: baseline;
+    }
+
+    .directory-name {
+      font-size: 0.62rem;
+      line-height: 1.6;
+      word-break: break-word;
+    }
+
+    .directory-id {
+      color: var(--muted);
+      font-size: 0.5rem;
+      line-height: 1.6;
+      flex: 0 0 auto;
+    }
+
+    .directory-bio {
+      color: var(--muted);
+      font-size: 0.52rem;
+      line-height: 1.7;
+      min-height: 1.7em;
     }
 
     hr {
@@ -978,6 +1792,30 @@
         display: grid;
       }
 
+      .forty-line-results-modal {
+        width: min(94vw, calc(86vh * 0.98));
+        aspect-ratio: auto;
+        max-height: 86vh;
+      }
+
+      .forty-line-results-frame {
+        grid-template-rows: auto 1fr auto;
+      }
+
+      .forty-line-results-grid,
+      .forty-line-results-actions,
+      .mode-switch,
+      .difficulty-grid,
+      .controls-modal-grid,
+      .player-profile-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .leaderboard-tab-bar,
+      .leaderboard-grid {
+        grid-template-columns: 1fr;
+      }
+
       .tiny-btn {
         width: 100%;
       }
@@ -1014,7 +1852,7 @@
               <div id="score" class="stat-value">0</div>
             </div>
             <div class="stat-box">
-              <div class="stat-label">Lines</div>
+              <div id="lines-label" class="stat-label">Lines</div>
               <div id="lines" class="stat-value">0</div>
             </div>
             <div class="stat-box">
@@ -1024,6 +1862,14 @@
             <div class="stat-box">
               <div class="stat-label">Combo</div>
               <div id="combo" class="stat-value">-</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-label">Mode</div>
+              <div id="mode-value" class="stat-value">Singleplayer</div>
+            </div>
+            <div id="timer-box" class="stat-box" style="display:none;">
+              <div class="stat-label">Timer</div>
+              <div id="timer-value" class="stat-value">00:00.000</div>
             </div>
           </div>
         </section>
@@ -1100,22 +1946,94 @@
       </div>
 
       <div class="menu-summary">
-        <div class="top-status-label">Session</div>
+        <div class="top-status-label">Player Summary</div>
         <div id="matchmaking-status-panel-copy" style="display:none;"></div>
         <div id="room-info-menu" class="room-text">Singleplayer only</div>
-      </div>
-
-      <div class="menu-actions">
-        <button id="primary-btn" class="btn" onclick="chooseSingleplayer()">Play Singleplayer</button>
-        <button id="start-room-btn" class="btn" style="display:none;" onclick="requestRoomStart()">Start Game</button>
-        <button id="online-btn" class="btn secondary" onclick="openOnlineMenu()">Play Online</button>
-        <button id="restart-btn" class="btn secondary" style="display:none;" onclick="window.location.href='/'">Restart Game</button>
+        <div class="menu-summary-grid">
+          <div class="menu-summary-card">
+            <div class="stat-label">Elo</div>
+            <div id="menu-player-elo" class="menu-summary-value">1000</div>
+          </div>
+          <div class="menu-summary-card">
+            <div class="stat-label">Rank</div>
+            <div id="menu-player-rank" class="menu-summary-value">-</div>
+          </div>
+          <div class="menu-summary-card">
+            <div class="stat-label">Record</div>
+            <div id="menu-player-record" class="menu-summary-value">0 / 0</div>
+          </div>
+        </div>
+        <div id="menu-quick-stats" class="quick-stats-line">PVP wins 0 | bot wins 0</div>
       </div>
 
       <section class="menu-section">
         <div class="section-heading">
-          <strong>Options</strong>
-          <span>Change mascots, audio, and colors.</span>
+          <strong>Play</strong>
+          <span>Jump into local game modes.</span>
+        </div>
+        <div class="menu-actions">
+          <button id="primary-btn" class="btn" onclick="chooseSingleplayer()">Play Singleplayer</button>
+          <button id="forty-line-btn" class="btn secondary" onclick="chooseFortyLineMode()">40-Line Mode</button>
+          <button id="restart-btn" class="btn secondary" style="display:none;" onclick="window.location.href='/'">Restart Game</button>
+          <button id="start-room-btn" class="btn" style="display:none;" onclick="requestRoomStart()">Start Game</button>
+        </div>
+      </section>
+
+      <section class="menu-section">
+        <div class="section-heading">
+          <strong>Online Play</strong>
+          <span>Browse ranked rooms or casual rooms in a dedicated modal.</span>
+        </div>
+        <div class="menu-actions">
+          <button id="online-btn" class="btn secondary" onclick="openOnlineMenu()">Open Online Play</button>
+        </div>
+      </section>
+
+      <section class="menu-section">
+        <div class="section-heading">
+          <strong>Bot Play</strong>
+          <span>Pick a ranked climb or a no-stakes practice match.</span>
+        </div>
+        <div class="menu-actions">
+          <button id="bot-play-btn" class="btn secondary" onclick="openBotPlayMenu()">Open Bot Play</button>
+        </div>
+      </section>
+
+      <section class="menu-section">
+        <div class="section-heading">
+          <strong>Leaderboards</strong>
+          <span>Review best runs and ranked records.</span>
+        </div>
+        <div class="menu-actions">
+          <button class="btn secondary" onclick="openPanel('leaderboards-panel')">Open Leaderboards</button>
+        </div>
+      </section>
+
+      <section class="menu-section">
+        <div class="section-heading">
+          <strong>Player Stats</strong>
+          <span>Check wins, losses, and bot results.</span>
+        </div>
+        <div class="menu-actions">
+          <button class="btn secondary" onclick="openPanel('player-stats-panel')">Open Player Stats</button>
+        </div>
+      </section>
+
+      <section class="menu-section">
+        <div class="section-heading">
+          <strong>Players</strong>
+          <span>Browse player profiles and update your own card.</span>
+        </div>
+        <div class="menu-actions">
+          <button class="btn secondary" onclick="openPanel('player-directory-panel')">Open Player Directory</button>
+          <button class="btn secondary" onclick="openPanel('profile-settings-panel')">Edit Profile</button>
+        </div>
+      </section>
+
+      <section class="menu-section">
+        <div class="section-heading">
+          <strong>Settings</strong>
+          <span>Adjust mascots, audio, colors, and layout.</span>
         </div>
         <div class="menu-actions">
           <button class="btn secondary" onclick="openPanel('companion-panel')">Mascots</button>
@@ -1123,124 +2041,297 @@
         </div>
       </section>
 
-      <div id="online-panel">
-        <div class="section-heading">
-          <strong>Lobby</strong>
-          <span>Create a room, join a room, or run a tournament.</span>
-        </div>
-
-        <div class="room-browser-top">
-          <label for="room-type">Room Type</label>
-          <select id="room-type" class="input" onchange="toggleRoomTypeFields()">
-            <option value="standard">Standard Room</option>
-            <option value="tournament">Tournament Room</option>
-          </select>
-
-          <label for="room-password">Room Lock Code</label>
-          <div class="tiny-row">
-            <input id="room-password" class="input" type="password" placeholder="blank = open room">
-            <button class="tiny-btn" onclick="createRoomClicked()">Create Room</button>
-          </div>
-
-          <div id="tournament-create-fields" class="stack-fields" style="display:none;">
-            <label for="tournament-entry-fee">Tournament Entry Fee</label>
-            <input id="tournament-entry-fee" class="input" type="number" min="120" step="1" value="120">
-            <label for="tournament-max-players">Tournament Player Limit</label>
-            <input id="tournament-max-players" class="input" type="number" min="2" max="50" step="1" value="8">
-            <label for="tournament-bonus">Bonus Pool Contribution</label>
-            <input id="tournament-bonus" class="input" type="number" min="0" step="1" value="0">
-            <label for="tournament-pin">Formbar PIN</label>
-            <input id="tournament-pin" class="input" type="password" placeholder="needed to fund the room">
-          </div>
-        </div>
-
-        <div class="section-heading" style="margin-bottom:8px;">
-          <strong>Active Rooms</strong>
-          <span>Select a room to join. Tournament joins charge the stored entry fee once.</span>
-        </div>
-
-        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
-          <div style="color:var(--muted); font-size:0.56rem;">Live room list</div>
-          <button class="tiny-btn dark" onclick="refreshRoomList()">Refresh</button>
-        </div>
-
-        <div id="room-list">
-          <div class="room-empty">No active rooms on the board</div>
-        </div>
-
-        <div class="stack-fields" style="margin-top:14px;">
-          <label for="join-pin">Tournament Join PIN</label>
-          <div class="tiny-row">
-            <input id="join-pin" class="input" type="password" placeholder="needed the first time you join">
-            <button class="tiny-btn dark" onclick="joinSelectedRoom()">Join Selected</button>
-          </div>
-        </div>
-
-        <div id="tournament-results" class="menu-section" style="display:none;">
-          <div class="section-heading" style="margin-bottom:8px;">
-            <strong>Tournament Results</strong>
-            <span id="tournament-meta">No tournament selected.</span>
-          </div>
-          <div id="tournament-leaderboard" class="results-board">
-            <div class="room-empty">No tournament data yet</div>
-          </div>
-          <div id="tournament-controls" class="stack-fields" style="display:none; margin-top:12px;">
-            <label for="tournament-max-players-live">Tournament Player Limit</label>
-            <div class="tiny-row">
-              <input id="tournament-max-players-live" class="input" type="number" min="2" max="50" step="1" value="8">
-              <button id="save-tournament-settings-btn" class="tiny-btn" onclick="updateTournamentSettings()">Update</button>
-            </div>
-            <div id="tournament-settings-hint" style="color:var(--muted); font-size:0.56rem; line-height:1.7;">
-              Open tournament only. Limit can be set from 2 to 50 players.
-            </div>
-          </div>
-        </div>
-
-        <div class="menu-actions" style="margin-top:14px;">
-          <button class="btn secondary" onclick="closeOnlineMenu()">Back</button>
-        </div>
-      </div>
-
       <section class="menu-section">
         <div class="section-heading">
           <strong>Controls</strong>
-          <span>Full keyboard layout for gameplay.</span>
+          <span>Open the full keyboard layout in a dedicated modal.</span>
         </div>
-        <div class="controls-list">
-          <div class="controls-item">
-            <span class="controls-action">Move left</span>
-            <span class="controls-key">Left Arrow</span>
-          </div>
-          <div class="controls-item">
-            <span class="controls-action">Move right</span>
-            <span class="controls-key">Right Arrow</span>
-          </div>
-          <div class="controls-item">
-            <span class="controls-action">Soft drop</span>
-            <span class="controls-key">Down Arrow</span>
-          </div>
-          <div class="controls-item">
-            <span class="controls-action">Rotate clockwise</span>
-            <span class="controls-key">Up Arrow</span>
-          </div>
-          <div class="controls-item">
-            <span class="controls-action">Rotate counterclockwise</span>
-            <span class="controls-key">Z</span>
-          </div>
-          <div class="controls-item">
-            <span class="controls-action">Hard drop</span>
-            <span class="controls-key">Space</span>
-          </div>
-          <div class="controls-item">
-            <span class="controls-action">Hold piece</span>
-            <span class="controls-key">C</span>
-          </div>
-          <div class="controls-item">
-            <span class="controls-action">Pause or resume</span>
-            <span class="controls-key">P</span>
-          </div>
+        <div class="menu-actions">
+          <button id="controls-btn" class="btn secondary" onclick="openControlsMenu()">Open Controls</button>
         </div>
       </section>
+    </div>
+
+    <div id="online-play-panel" class="menu-card menu-popout">
+      <div class="modal-topbar">
+        <div class="section-heading">
+          <strong>Online Play</strong>
+          <span id="online-play-copy">Create a ranked room, join a ranked room, or run a tournament.</span>
+        </div>
+        <button class="btn secondary modal-close" onclick="closeOnlineMenu()">Close</button>
+      </div>
+
+      <div class="mode-switch">
+        <button id="online-ranked-btn" class="btn mode-switch-btn is-active" onclick="setOnlinePlayMode('ranked')">Ranked</button>
+        <button id="online-casual-btn" class="btn secondary mode-switch-btn is-inactive" onclick="setOnlinePlayMode('casual')">Casual</button>
+      </div>
+
+      <div class="room-browser-top">
+        <label for="room-type">Room Type</label>
+        <select id="room-type" class="input" onchange="toggleRoomTypeFields()">
+          <option value="standard">Ranked Room</option>
+          <option value="tournament">Tournament Room</option>
+        </select>
+
+        <label for="room-password">Room Lock Code</label>
+        <div class="tiny-row">
+          <input id="room-password" class="input" type="password" placeholder="blank = open room">
+          <button class="tiny-btn" onclick="createRoomClicked()">Create Room</button>
+        </div>
+
+        <div id="tournament-create-fields" class="stack-fields" style="display:none;">
+          <label for="tournament-entry-fee">Tournament Entry Fee</label>
+          <input id="tournament-entry-fee" class="input" type="number" min="120" step="1" value="120">
+          <label for="tournament-max-players">Tournament Player Limit</label>
+          <input id="tournament-max-players" class="input" type="number" min="2" max="50" step="1" value="8">
+          <label for="tournament-bonus">Bonus Pool Contribution</label>
+          <input id="tournament-bonus" class="input" type="number" min="0" step="1" value="0">
+          <label for="tournament-pin">Formbar PIN</label>
+          <input id="tournament-pin" class="input" type="password" placeholder="needed to fund the room">
+        </div>
+      </div>
+
+      <div class="section-heading" style="margin-bottom:8px;">
+        <strong id="online-room-list-title">Active Ranked Rooms</strong>
+        <span id="online-room-list-copy">Select a room to join. Tournament joins charge the stored entry fee once.</span>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+        <div id="online-room-list-status" style="color:var(--muted); font-size:0.56rem;">Live room list</div>
+        <button class="tiny-btn dark" onclick="refreshRoomList()">Refresh</button>
+      </div>
+
+      <div id="room-list">
+        <div class="room-empty">No active rooms on the board</div>
+      </div>
+
+      <div class="stack-fields" style="margin-top:14px;">
+        <label for="join-pin">Tournament Join PIN</label>
+        <div class="tiny-row">
+          <input id="join-pin" class="input" type="password" placeholder="needed the first time you join">
+          <button class="tiny-btn dark" onclick="joinSelectedRoom()">Join Selected</button>
+        </div>
+      </div>
+
+      <div id="tournament-results" class="menu-section" style="display:none;">
+        <div class="section-heading" style="margin-bottom:8px;">
+          <strong>Tournament Results</strong>
+          <span id="tournament-meta">No tournament selected.</span>
+        </div>
+        <div id="tournament-leaderboard" class="results-board">
+          <div class="room-empty">No tournament data yet</div>
+        </div>
+        <div id="tournament-controls" class="stack-fields" style="display:none; margin-top:12px;">
+          <label for="tournament-max-players-live">Tournament Player Limit</label>
+          <div class="tiny-row">
+            <input id="tournament-max-players-live" class="input" type="number" min="2" max="50" step="1" value="8">
+            <button id="save-tournament-settings-btn" class="tiny-btn" onclick="updateTournamentSettings()">Update</button>
+          </div>
+          <div id="tournament-settings-hint" style="color:var(--muted); font-size:0.56rem; line-height:1.7;">
+            Open tournament only. Limit can be set from 2 to 50 players.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="bot-play-panel" class="menu-card menu-popout">
+      <div class="modal-topbar">
+        <div class="section-heading">
+          <strong>Bot Play</strong>
+          <span>Choose whether the match should affect rank, then pick a bot difficulty.</span>
+        </div>
+        <button class="btn secondary modal-close" onclick="closeBotPlayMenu()">Close</button>
+      </div>
+
+      <div class="bot-mode-grid">
+        <div class="mode-option-card">
+          <strong>Ranked Bot Play</strong>
+          <p>Counts toward bot stats and Elo. Best when you want the real ladder rules.</p>
+          <div class="difficulty-grid">
+            <button class="btn" onclick="chooseBotMatch('easyBot', 'ranked')">Easy</button>
+            <button class="btn" onclick="chooseBotMatch('mediumBot', 'ranked')">Medium</button>
+            <button class="btn" onclick="chooseBotMatch('hardBot', 'ranked')">Hard</button>
+          </div>
+        </div>
+
+        <div class="mode-option-card">
+          <strong>Non-Ranked Bot Play</strong>
+          <p>Practice with the same bot difficulties, but keep the match off the ranked record.</p>
+          <div class="difficulty-grid">
+            <button class="btn secondary" onclick="chooseBotMatch('easyBot', 'casual')">Easy</button>
+            <button class="btn secondary" onclick="chooseBotMatch('mediumBot', 'casual')">Medium</button>
+            <button class="btn secondary" onclick="chooseBotMatch('hardBot', 'casual')">Hard</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="controls-panel" class="menu-card menu-popout">
+      <div class="modal-topbar">
+        <div class="section-heading">
+          <strong>Controls</strong>
+          <span>Rebind gameplay keys here. Changes save in your browser immediately.</span>
+        </div>
+        <button class="btn secondary modal-close" onclick="closeControlsMenu()">Close</button>
+      </div>
+
+      <div class="controls-editor">
+        <div class="controls-modal-copy">
+          <span>Click any key badge, then press the new key you want to use.</span>
+          <span>Esc still closes menus. If you reuse a key, it moves to the new action automatically.</span>
+        </div>
+        <div id="controls-groups" class="controls-groups"></div>
+        <div class="controls-footer">
+          <span class="controls-footer-note">Bindings save automatically and will still be there after you exit.</span>
+          <button class="btn secondary" type="button" onclick="resetControlsToDefault()">Reset Defaults</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="leaderboards-panel" class="menu-card" style="display:none; flex-direction:column;">
+      <div class="leaderboard-toolbar">
+        <div class="section-heading" style="margin-bottom:0;">
+          <strong>Leaderboards</strong>
+          <span>Switch categories, search by username or user ID, and open player profiles.</span>
+        </div>
+        <input
+          id="leaderboard-search"
+          class="input leaderboard-search"
+          type="search"
+          placeholder="Search by Formbar username or user ID"
+          autocomplete="off">
+      </div>
+
+      <div id="leaderboard-tabs" class="leaderboard-tab-bar"></div>
+      <div id="leaderboard-meta" class="leaderboard-meta">Select a leaderboard tab.</div>
+      <div id="leaderboard-grid" class="leaderboard-grid">
+        <div class="room-empty">No leaderboard entries yet</div>
+      </div>
+
+      <div class="leaderboard-pagination">
+        <button id="leaderboard-prev-btn" class="btn secondary" type="button" onclick="changeLeaderboardPage(-1)">Previous</button>
+        <div id="leaderboard-page-copy" class="leaderboard-page-copy">Page 1 of 1</div>
+        <button id="leaderboard-next-btn" class="btn secondary" type="button" onclick="changeLeaderboardPage(1)">Next</button>
+      </div>
+
+      <button class="btn secondary" style="margin-top:12px;" onclick="openPanel('main-menu-panel')">Back</button>
+
+      <div id="player-profile-popout" class="player-profile-popout">
+        <div class="player-profile-backdrop" aria-hidden="true"></div>
+        <div id="player-profile-card" class="player-profile-card" role="dialog" aria-modal="false" aria-labelledby="player-profile-name">
+          <div class="player-profile-head">
+            <img id="player-profile-avatar" class="player-profile-avatar" src="" alt="">
+            <div class="player-profile-copy">
+              <div id="player-profile-name" class="player-profile-name">Player</div>
+              <div id="player-profile-id" class="player-profile-id">Formbar ID</div>
+            </div>
+            <button class="btn secondary player-profile-close" type="button" onclick="closeLeaderboardProfile()">Close</button>
+          </div>
+
+          <p id="player-profile-bio" class="player-profile-bio">No bio set yet.</p>
+          <div id="player-profile-grid" class="player-profile-grid"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="player-stats-panel" class="menu-card" style="display:none; flex-direction:column;">
+      <div class="section-heading" style="margin-bottom:14px;">
+        <strong>Player Stats</strong>
+        <span>Persistent match stats for your account.</span>
+      </div>
+      <div class="results-board">
+        <div class="leader-row"><span>Total Wins</span><span></span><span id="stats-total-wins">0</span></div>
+        <div class="leader-row"><span>Total Losses</span><span></span><span id="stats-total-losses">0</span></div>
+        <div class="leader-row"><span>PVP Wins</span><span></span><span id="stats-player-vs-player-wins">0</span></div>
+        <div class="leader-row"><span>Easy Bot Wins</span><span></span><span id="stats-bot-wins-easy">0</span></div>
+        <div class="leader-row"><span>Medium Bot Wins</span><span></span><span id="stats-bot-wins-medium">0</span></div>
+        <div class="leader-row"><span>Hard Bot Wins</span><span></span><span id="stats-bot-wins-hard">0</span></div>
+      </div>
+      <button class="btn secondary" style="margin-top:8px;" onclick="openPanel('main-menu-panel')">Back</button>
+    </div>
+
+    <div id="player-directory-panel" class="menu-card" style="display:none; flex-direction:column;">
+      <div class="section-heading" style="margin-bottom:14px;">
+        <strong>Player Directory</strong>
+        <span>Search players by username or Formbar ID.</span>
+      </div>
+      <div class="directory-shell">
+        <div class="directory-toolbar">
+          <input id="player-directory-search" class="input" type="search" placeholder="Search players" autocomplete="off">
+          <div id="player-directory-meta" class="field-note">Loading players...</div>
+        </div>
+        <div id="player-directory-grid" class="directory-grid">
+          <div class="room-empty">Loading players...</div>
+        </div>
+      </div>
+      <button class="btn secondary" style="margin-top:8px;" onclick="openPanel('main-menu-panel')">Back</button>
+    </div>
+
+    <div id="profile-settings-panel" class="menu-card" style="display:none; flex-direction:column;">
+      <div class="section-heading" style="margin-bottom:14px;">
+        <strong>Edit Profile</strong>
+        <span>Upload a square-ready avatar automatically and set a short bio.</span>
+      </div>
+      <div class="profile-settings-shell">
+        <div class="profile-settings-card profile-settings-head">
+          <img id="profile-settings-avatar" class="profile-settings-avatar" src="" alt="Your profile picture">
+          <div class="profile-settings-copy">
+            <strong id="profile-settings-name">Player</strong>
+            <span id="profile-settings-id">Formbar ID</span>
+            <button class="btn secondary" type="button" onclick="document.getElementById('profile-avatar-input').click()">Upload Picture</button>
+          </div>
+        </div>
+        <div class="stack-fields">
+          <label for="profile-bio-input">Description</label>
+          <textarea id="profile-bio-input" class="input" maxlength="200" placeholder="Add a short player bio."></textarea>
+          <div class="tiny-row">
+            <span id="profile-bio-count" class="field-note">0 / 200</span>
+            <span class="field-note">Images are cropped, resized, and optimized automatically.</span>
+          </div>
+        </div>
+        <div class="settings-actions">
+          <button class="btn" type="button" onclick="savePlayerProfileSettings()">Save Profile</button>
+          <button class="btn secondary" type="button" onclick="openPanel('main-menu-panel')">Back</button>
+        </div>
+        <div id="profile-save-note" class="save-note"></div>
+        <input id="profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none" onchange="queueProfileAvatar(this)">
+      </div>
+    </div>
+
+    <div id="forty-line-results-panel" class="forty-line-results-modal">
+      <div class="forty-line-results-frame">
+        <div class="forty-line-results-header">
+          <p class="forty-line-results-kicker">40-Line Mode</p>
+          <h1>Run Clear</h1>
+          <p class="forty-line-results-subtitle">All 40 lines are down. Your run summary is ready.</p>
+        </div>
+
+        <div class="forty-line-results-body">
+          <div class="forty-line-results-time-card">
+            <div class="top-status-label">Final Time</div>
+            <div id="forty-line-final-time" class="forty-line-results-time">00:00.000</div>
+          </div>
+
+          <div class="forty-line-results-grid">
+            <div class="forty-line-results-stat">
+              <div class="forty-line-results-label">Personal Best</div>
+              <div id="forty-line-personal-best" class="forty-line-results-value accent">--</div>
+            </div>
+            <div class="forty-line-results-stat">
+              <div class="forty-line-results-label">Comparison</div>
+              <div id="forty-line-result-comparison" class="forty-line-results-value">Checking...</div>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <p id="forty-line-results-note" class="forty-line-results-note">Checking your best run...</p>
+          <div class="forty-line-results-actions">
+            <button class="btn" onclick="restartFortyLineMode()">Retry</button>
+            <button class="btn secondary" onclick="returnToMainMenu()">Return to Menu</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div id="companion-panel" class="menu-card">
@@ -1285,7 +2376,8 @@
     window.TETRIS_PLAYER = {
       userId: <%- JSON.stringify(player.userId) %>,
       username: <%- JSON.stringify(player.username) %>,
-      canAutoplayCheat: <%- JSON.stringify(!!player.canAutoplayCheat) %>
+      canAutoplayCheat: <%- JSON.stringify(!!player.canAutoplayCheat) %>,
+      profile: <%- JSON.stringify(player.profile || null) %>
     };
   </script>
   <script src="/socket.io/socket.io.js"></script>

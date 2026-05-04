@@ -80,8 +80,17 @@ function collide(arena, player) {
 }
 
 function updateScoreUi() {
+  const linesLabel = document.getElementById('lines-label');
+  if (linesLabel) {
+    linesLabel.innerText = isFortyLineMode() ? 'Lines Cleared' : 'Lines';
+  }
+
+  const linesValue = isFortyLineMode()
+    ? `${fortyLineModeState.currentLinesCleared} / ${FORTY_LINE_TARGET}`
+    : player.lines;
+
   document.getElementById('score').innerText = player.score;
-  document.getElementById('lines').innerText = player.lines;
+  document.getElementById('lines').innerText = linesValue;
   document.getElementById('level').innerText = player.level;
   document.getElementById('combo').innerText = player.combo > 0 ? player.combo : '-';
   document.getElementById('b2b').innerText = player.backToBack > 0 ? player.backToBack : '-';
@@ -110,6 +119,13 @@ function arenaSweep() {
 
   player.combo += 1;
   player.lines += rowCount;
+
+  if (isFortyLineMode()) {
+    fortyLineModeState.currentLinesCleared = Math.min(
+      FORTY_LINE_TARGET,
+      fortyLineModeState.currentLinesCleared + rowCount
+    );
+  }
 
   let points = rowCount * 10 * rowCount;
   if (player.combo > 0) {
@@ -140,6 +156,18 @@ function arenaSweep() {
 
   dropInterval = Math.max(80, Math.pow(0.85, player.level - 1) * 1000);
   updateScoreUi();
+
+  if (isFortyLineMode() && fortyLineModeState.currentLinesCleared >= FORTY_LINE_TARGET) {
+    completeFortyLineMode();
+  }
+
+  if (gameMode === BOT_MATCH_MODE && currentBotMatch) {
+    const garbageLines = Math.max(0, rowCount - 1);
+    if (garbageLines > 0) {
+      addGarbageRowsToBot(currentBotMatch, garbageLines);
+      updateBotRemoteState();
+    }
+  }
 
   if (socket && currentRoom && playerRole === 'player' && (gameMode === 'multiplayer' || gameMode === 'tournament')) {
     socket.emit('clearLines', { lines: rowCount });
@@ -187,6 +215,7 @@ function playerReset() {
   player.canHold = true;
   player.lockTimer = 0;
   player.lockMoves = 0;
+  startFortyLineTimerIfNeeded();
   if (collide(arena, player)) {
     handleLocalGameOver();
   }
@@ -276,6 +305,9 @@ function playerRotate(dir) {
 function lockPiece() {
   merge();
   arenaSweep();
+  if (gameState !== 'PLAYING') {
+    return;
+  }
   playerReset();
 }
 

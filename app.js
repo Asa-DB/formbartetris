@@ -3,14 +3,35 @@ const fs = require('fs');
 const http = require('http');
 const session = require('express-session');
 const jwt = require('jsonwebtoken'); // Needed to decode the token
+const sharp = require('sharp');
 const path = require("path");
 const { Server } = require('socket.io');
 const {
+    DEFAULT_ELO_K_FACTOR,
     initDb,
     saveUser,
     saveScore,
+    addScore,
+    calculateEloChange,
     createMatch,
+    getBotRatingProfile,
+    getPlayerDirectory,
+    getPlayerElo,
+    getPlayerMenuSummary,
+    getPlayerProfile,
     getTopScores,
+    getLeaderboard,
+    getLeaderboardCategoryEntries,
+    getPlayerRank,
+    getPlayerRatingProfile,
+    getPlayerStats,
+    getRecentBotMatchCount,
+    getRecentMatchHistoryCount,
+    isMatchAlreadyProcessed,
+    recordMatchHistoryEntry,
+    updateCompetitorElo,
+    updatePlayerProfile,
+    updatePlayerStats,
 } = require('./db');
 const tournamentManager = require('./tournamentManager');
 
@@ -38,7 +59,20 @@ const entryFee = process.env.ENTRYFEE;
 const MIN_TOURNAMENT_ENTRY_FEE = 120;
 const DEFAULT_TOURNAMENT_MAX_PLAYERS = 8;
 const MAX_TOURNAMENT_PLAYERS = 50;
+const DEFAULT_BOT_NAME = 'Bot';
+const BOT_ELO_GAIN_MULTIPLIER = 0.4;
+const BOT_ELO_MIN_MULTIPLIER = 0.12;
+const BOT_MATCH_RATE_LIMIT_WINDOW_MS = 5000;
+const BOT_MATCH_REPEAT_WINDOW_MS = 10 * 60 * 1000;
+const BOT_MATCH_DIMINISHING_WINDOW_MS = 24 * 60 * 60 * 1000;
+const BOT_MATCH_MINIMUM_DURATION_MS = 20000;
+const BOT_MATCH_MAX_REPEAT_COUNT = 8;
+const PROFILE_BIO_MAX_LENGTH = 200;
+const PROFILE_AVATAR_SIZE = 128;
 const isProduction = process.env.NODE_ENV === 'production';
+const avatarFolder = path.join(__dirname, 'public', 'avatars');
+
+fs.mkdirSync(avatarFolder, { recursive: true });
 
 if (!sessionSecret) {
     throw new Error('Missing SECRET in environment variables');
@@ -86,6 +120,7 @@ app.set('views', path.join(__dirname, 'views'));
 
 // Needed to read POST data from the form
 app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '6mb' }));
 
 function toPositiveInteger(value, fallback = 0) {
     const parsed = Number(value);
@@ -214,6 +249,55 @@ function wrapExpressMiddleware(middleware) {
     return (socket, next) => middleware(socket.request, {}, next);
 }
 
+function getAvatarUrl(playerId, avatarVersion = 0) {
+    const normalizedVersion = Number.isInteger(avatarVersion) ? avatarVersion : 0;
+    return normalizedVersion > 0
+        ? `/avatars/${encodeURIComponent(String(playerId))}.webp?v=${normalizedVersion}`
+        : '';
+}
+
+function sanitizeProfileBio(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim().slice(0, PROFILE_BIO_MAX_LENGTH);
+}
+
+function decodeDataUrlImage(dataUrl) {
+    const input = String(dataUrl || '');
+    const match = input.match(/^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i);
+
+    if (!match) {
+        return null;
+    }
+
+    return {
+        mimeType: match[1].toLowerCase(),
+        buffer: Buffer.from(match[2], 'base64')
+    };
+}
+
+async function normalizeAvatarImage(dataUrl) {
+    const parsedImage = decodeDataUrlImage(dataUrl);
+    if (!parsedImage || !parsedImage.buffer.length) {
+        throw new Error('invalid image data');
+    }
+
+    return sharp(parsedImage.buffer)
+        .rotate()
+        .resize(PROFILE_AVATAR_SIZE, PROFILE_AVATAR_SIZE, {
+            fit: 'cover',
+            position: 'centre'
+        })
+        .webp({
+            quality: 82,
+            effort: 4
+        })
+        .toBuffer();
+}
+
+async function savePlayerAvatar(playerId, dataUrl) {
+    const outputBuffer = await normalizeAvatarImage(dataUrl);
+    await fs.promises.writeFile(path.join(avatarFolder, `${playerId}.webp`), outputBuffer);
+}
+
 // Middleware to check if the user is authenticated
 // If not, redirect to the login page
 function isAuthenticated(req, res, next) {
@@ -287,11 +371,16 @@ app.get('/tetris', isAuthenticated, (req, res) => {
     if (req.session.hasPaid) {
         // Reset the hasPaid flag so the user can play again
         req.session.hasPaid = false;
+        const playerProfile = getPlayerProfile(req.session.userId);
         res.render('tetris', {
             player: {
                 userId: req.session.userId,
                 username: req.session.user,
                 canAutoplayCheat: String(req.session.userId) === String(payUserId),
+                profile: playerProfile ? {
+                    ...playerProfile,
+                    avatarUrl: getAvatarUrl(playerProfile.playerId, playerProfile.avatarVersion)
+                } : null,
             }
         });
     } else {
@@ -371,6 +460,214 @@ app.post('/scores/save', isAuthenticated, (req, res) => {
     res.json({ success: true });
 });
 
+app.post('/leaderboard/add', isAuthenticated, (req, res) => {
+    const scoreOrTime = Number(req.body.scoreOrTime);
+    const modeType = typeof req.body.modeType === 'string' ? req.body.modeType.trim() : '';
+    const timestamp = typeof req.body.timestamp === 'string' && req.body.timestamp.trim()
+        ? req.body.timestamp.trim()
+        : new Date().toISOString();
+    const playerName = req.session.user || req.body.playerName;
+
+    if (!playerName || !modeType || !Number.isFinite(scoreOrTime)) {
+        return res.status(400).json({ success: false, message: 'invalid leaderboard entry' });
+    }
+
+    addScore({
+        playerName,
+        playerId: req.session.userId,
+        scoreOrTime: Math.floor(scoreOrTime),
+        timestamp,
+        modeType
+    });
+
+    res.json({
+        success: true,
+        entry: {
+            playerName,
+            scoreOrTime: Math.floor(scoreOrTime),
+            timestamp,
+            modeType
+        }
+    });
+});
+
+app.get('/leaderboard/:modeType', isAuthenticated, (req, res) => {
+    const modeType = typeof req.params.modeType === 'string' ? req.params.modeType.trim() : '';
+    const timeframe = typeof req.query.timeframe === 'string' ? req.query.timeframe.trim() : 'allTime';
+
+    if (!modeType) {
+        return res.status(400).json({ success: false, message: 'missing mode type' });
+    }
+
+    const leaderboardEntries = getLeaderboard(modeType, timeframe);
+    res.json({ success: true, entries: leaderboardEntries });
+});
+
+app.get('/leaderboards/:categoryKey', isAuthenticated, (req, res) => {
+    const categoryKey = typeof req.params.categoryKey === 'string' ? req.params.categoryKey.trim() : '';
+
+    if (!categoryKey) {
+        return res.status(400).json({ success: false, message: 'missing leaderboard category' });
+    }
+
+    const entries = getLeaderboardCategoryEntries(categoryKey);
+    if (!entries.length && !['eloNoBots', 'eloWithBots', 'fortyLineTimes'].includes(categoryKey)) {
+        return res.status(404).json({ success: false, message: 'unknown leaderboard category' });
+    }
+
+    res.json({
+        success: true,
+        categoryKey,
+        entries
+    });
+});
+
+app.get('/players/:playerId/rank', isAuthenticated, (req, res) => {
+    const playerId = Number(req.params.playerId);
+
+    if (!Number.isInteger(playerId)) {
+        return res.status(400).json({ success: false, message: 'invalid player id' });
+    }
+
+    res.json({
+        success: true,
+        ...getPlayerRankSummary(playerId)
+    });
+});
+
+app.get('/players/:playerId/profile', isAuthenticated, (req, res) => {
+    const playerId = Number(req.params.playerId);
+
+    if (!Number.isInteger(playerId)) {
+        return res.status(400).json({ success: false, message: 'invalid player id' });
+    }
+
+    const playerProfile = getPlayerProfile(playerId);
+    if (!playerProfile) {
+        return res.status(404).json({ success: false, message: 'player not found' });
+    }
+
+    res.json({
+        success: true,
+        playerProfile: {
+            ...playerProfile,
+            avatarUrl: getAvatarUrl(playerProfile.playerId, playerProfile.avatarVersion)
+        }
+    });
+});
+
+app.get('/players', isAuthenticated, (req, res) => {
+    const search = typeof req.query.search === 'string' ? req.query.search : '';
+    const players = getPlayerDirectory(search).map(player => ({
+        ...player,
+        avatarUrl: getAvatarUrl(player.playerId, player.avatarVersion)
+    }));
+
+    res.json({
+        success: true,
+        players
+    });
+});
+
+app.get('/player-summary', isAuthenticated, (req, res) => {
+    const playerSummary = getPlayerMenuSummary(req.session.userId);
+
+    if (!playerSummary) {
+        return res.status(404).json({ success: false, message: 'player not found' });
+    }
+
+    res.json({
+        success: true,
+        playerSummary: {
+            ...playerSummary,
+            avatarUrl: getAvatarUrl(playerSummary.playerId, playerSummary.avatarVersion)
+        }
+    });
+});
+
+app.post('/player-profile', isAuthenticated, async (req, res) => {
+    const playerId = req.session.userId;
+    const bio = sanitizeProfileBio(req.body.bio);
+    const avatarDataUrl = typeof req.body.avatarDataUrl === 'string' ? req.body.avatarDataUrl.trim() : '';
+    const currentProfile = getPlayerProfile(playerId);
+
+    if (!currentProfile) {
+        return res.status(404).json({ success: false, message: 'player not found' });
+    }
+
+    let avatarVersion = currentProfile.avatarVersion || 0;
+
+    try {
+        if (avatarDataUrl) {
+            await savePlayerAvatar(playerId, avatarDataUrl);
+            avatarVersion += 1;
+        }
+    } catch (error) {
+        return res.status(400).json({ success: false, message: 'invalid profile image' });
+    }
+
+    updatePlayerProfile(playerId, {
+        bio,
+        avatarVersion
+    });
+
+    const nextProfile = getPlayerProfile(playerId);
+    res.json({
+        success: true,
+        playerProfile: {
+            ...nextProfile,
+            avatarUrl: getAvatarUrl(nextProfile.playerId, nextProfile.avatarVersion)
+        }
+    });
+});
+
+app.post('/bot-match/start', isAuthenticated, (req, res) => {
+    const botDifficulty = typeof req.body.botDifficulty === 'string' ? req.body.botDifficulty.trim() : '';
+    const pendingBotMatch = createBotMatchSession(req.session.userId, botDifficulty);
+
+    if (!pendingBotMatch) {
+        return res.status(400).json({ success: false, message: 'invalid bot difficulty' });
+    }
+
+    res.json({
+        success: true,
+        botMatch: pendingBotMatch,
+        playerSummary: getPlayerRankSummary(req.session.userId)
+    });
+});
+
+app.post('/bot-match/result', isAuthenticated, (req, res) => {
+    const botDifficulty = typeof req.body.botDifficulty === 'string' ? req.body.botDifficulty.trim() : '';
+    const botDifficultyConfig = getBotDifficultyConfig(botDifficulty);
+    const result = typeof req.body.result === 'string' ? req.body.result.trim() : '';
+    const matchId = typeof req.body.matchId === 'string' ? req.body.matchId.trim() : '';
+
+    if (!botDifficultyConfig || !matchId) {
+        return res.status(400).json({ success: false, message: 'invalid bot match payload' });
+    }
+
+    const matchResult = handleMatchResult({
+        matchId,
+        playerA: getPlayerCompetitor(req.session.userId, req.session.user),
+        playerB: getBotCompetitor(botDifficultyConfig.botId, botDifficultyConfig.botName),
+        result,
+        modeType: 'botRanked',
+        botDifficulty,
+        matchTimestamp: new Date().toISOString()
+    });
+
+    if (!matchResult.success) {
+        return res.status(400).json(matchResult);
+    }
+
+    res.json({
+        success: true,
+        ignored: !!matchResult.ignored,
+        eloResult: matchResult.eloResult,
+        playerSummary: matchResult.playerSummary
+    });
+});
+
 app.post('/matches/create', isAuthenticated, (req, res) => {
     const player1 = Number(req.body.player1);
     const player2 = Number(req.body.player2);
@@ -380,8 +677,33 @@ app.post('/matches/create', isAuthenticated, (req, res) => {
         return res.status(400).json({ success: false, message: 'invalid match players' });
     }
 
-    const result = createMatch(player1, player2, winner);
-    res.json({ success: true, id: result.lastInsertRowid });
+    if (winner !== player1 && winner !== player2) {
+        const debugMatch = createMatch(player1, player2, winner);
+        return res.json({ success: true, id: debugMatch.lastInsertRowid, ignored: true });
+    }
+
+    const debugMatchId = `debug-${player1}-${player2}-${Date.now()}`;
+    const winningPlayerId = winner;
+    const losingPlayerId = winner === player1 ? player2 : player1;
+    const matchResult = handleMatchResult({
+        matchId: debugMatchId,
+        playerA: getPlayerCompetitor(winningPlayerId),
+        playerB: getPlayerCompetitor(losingPlayerId),
+        result: 'win',
+        modeType: 'playerVsPlayerRanked',
+        matchTimestamp: new Date().toISOString()
+    });
+
+    if (!matchResult.success) {
+        return res.status(400).json(matchResult);
+    }
+
+    res.json({
+        success: true,
+        debugMatchId,
+        eloResult: matchResult.eloResult,
+        playerSummary: matchResult.playerSummary
+    });
 });
 
 // Put all the static files in the public folder so they're organized
@@ -399,6 +721,12 @@ const io = new Server(server, {
 const adjectives = ['pink', 'lazy', 'angry', 'blue', 'sleepy', 'tiny', 'happy', 'weird', 'fast', 'soft'];
 const animals = ['fox', 'cat', 'panda', 'turtle', 'bear', 'rabbit', 'otter', 'lizard', 'wolf', 'duck'];
 const rooms = {};
+const pendingBotMatches = new Map();
+const BOT_MATCH_OPTIONS = {
+    easyBot: { botId: 'easyBot', botName: 'Easy Bot' },
+    mediumBot: { botId: 'mediumBot', botName: 'Medium Bot' },
+    hardBot: { botId: 'hardBot', botName: 'Hard Bot' }
+};
 
 function isTournamentRoom(room) {
     return !!(room && room.roomType === 'tournament' && room.tournamentId);
@@ -484,6 +812,7 @@ function getRoomInfo(roomName) {
     return {
         roomName,
         roomType: room.roomType || 'standard',
+        isRanked: room.isRanked !== false,
         passwordProtected: !!room.password,
         locked: !!room.locked,
         ownerUserId: room.ownerUserId || null,
@@ -516,6 +845,7 @@ function getRoomList() {
             return {
                 roomName,
                 roomType: room.roomType || 'standard',
+                isRanked: room.isRanked !== false,
                 playerCount: tournament ? tournament.playerCount : room.players.length,
                 spectatorCount: room.spectators.length,
                 passwordProtected: !!room.password,
@@ -527,6 +857,423 @@ function getRoomList() {
                 submittedPlayers: tournament ? tournament.submittedPlayers : null
             };
         });
+}
+
+function getOtherPlayerSocket(roomName, currentSocketId) {
+    const room = rooms[roomName];
+    if (!room) {
+        return null;
+    }
+
+    for (const socketId of room.players) {
+        if (socketId === currentSocketId) {
+            continue;
+        }
+
+        const otherSocket = io.sockets.sockets.get(socketId);
+        if (otherSocket) {
+            return otherSocket;
+        }
+    }
+
+    return null;
+}
+
+function getPlayerCompetitor(playerId, fallbackPlayerName = 'player') {
+    const playerProfile = getPlayerRatingProfile(playerId);
+
+    if (playerProfile) {
+        return playerProfile;
+    }
+
+    return {
+        playerId,
+        playerName: fallbackPlayerName,
+        eloRating: getPlayerElo(playerId),
+        competitorType: 'player'
+    };
+}
+
+function getBotCompetitor(botId, botName = DEFAULT_BOT_NAME) {
+    return getBotRatingProfile(botId, botName);
+}
+
+function getPlayerRankSummary(playerId) {
+    const playerSummary = getPlayerMenuSummary(playerId);
+
+    if (!playerSummary) {
+        return {
+            playerId,
+            eloRating: getPlayerElo(playerId),
+            rank: getPlayerRank(playerId),
+            totalWins: 0,
+            totalLosses: 0,
+            botWinsEasy: 0,
+            botWinsMedium: 0,
+            botWinsHard: 0,
+            playerVsPlayerWins: 0
+        };
+    }
+
+    return playerSummary;
+}
+
+function sendRankUpdate(targetSocket, eloRatingChange = 0) {
+    if (!targetSocket || !targetSocket.data || targetSocket.data.userId == null) {
+        return;
+    }
+
+    targetSocket.emit('rankUpdate', {
+        ...getPlayerRankSummary(targetSocket.data.userId),
+        eloRatingChange
+    });
+}
+
+function createBotMatchId(playerId, botId) {
+    return `bot-${playerId}-${botId}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+}
+
+function createRoomMatchId(roomName) {
+    return `room-${roomName.replace(/\s+/g, '-')}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+}
+
+function getBotDifficultyConfig(botDifficulty) {
+    return BOT_MATCH_OPTIONS[botDifficulty] || null;
+}
+
+function getBotWinStatField(botDifficulty) {
+    if (botDifficulty === 'easyBot') return 'botWinsEasy';
+    if (botDifficulty === 'mediumBot') return 'botWinsMedium';
+    if (botDifficulty === 'hardBot') return 'botWinsHard';
+    return null;
+}
+
+function createBotMatchSession(playerId, botDifficulty) {
+    const botDifficultyConfig = getBotDifficultyConfig(botDifficulty);
+    if (!botDifficultyConfig) {
+        return null;
+    }
+
+    const matchId = createBotMatchId(playerId, botDifficultyConfig.botId);
+    const pendingBotMatch = {
+        matchId,
+        playerId,
+        botId: botDifficultyConfig.botId,
+        botName: botDifficultyConfig.botName,
+        botDifficulty,
+        modeType: 'botRanked',
+        createdAt: Date.now(),
+        completed: false
+    };
+
+    pendingBotMatches.set(matchId, pendingBotMatch);
+    return pendingBotMatch;
+}
+
+function getBotEloGainMultiplier(playerId, botId) {
+    const recentBotMatchCount = getRecentBotMatchCount(playerId, botId, BOT_MATCH_DIMINISHING_WINDOW_MS);
+    const diminishingMultiplier = Math.max(BOT_ELO_MIN_MULTIPLIER, 1 - (recentBotMatchCount * 0.08));
+    return Math.max(BOT_ELO_MIN_MULTIPLIER, Math.round(BOT_ELO_GAIN_MULTIPLIER * diminishingMultiplier * 100) / 100);
+}
+
+function getAdjustedBotMatchEloResult(playerCompetitor, botCompetitor, result) {
+    const standardEloResult = calculateEloChange(playerCompetitor, botCompetitor, {
+        playerAScore: result,
+        kFactor: DEFAULT_ELO_K_FACTOR
+    });
+
+    if (standardEloResult.playerAEloChange <= 0) {
+        return {
+            ...standardEloResult,
+            botEloGainMultiplier: 1
+        };
+    }
+
+    const botEloGainMultiplier = getBotEloGainMultiplier(playerCompetitor.playerId, botCompetitor.botId);
+    const reducedPlayerEloChange = Math.max(1, Math.round(standardEloResult.playerAEloChange * botEloGainMultiplier));
+
+    return {
+        ...standardEloResult,
+        playerAEloChange: reducedPlayerEloChange,
+        playerBEloChange: -reducedPlayerEloChange,
+        playerANewElo: playerCompetitor.eloRating + reducedPlayerEloChange,
+        playerBNewElo: botCompetitor.eloRating - reducedPlayerEloChange,
+        botEloGainMultiplier
+    };
+}
+
+function updateStatsForMatch(playerId, matchResult) {
+    const updatedPlayerStats = {
+        ...getPlayerStats(playerId)
+    };
+
+    if (matchResult === 'win') {
+        updatedPlayerStats.totalWins += 1;
+    } else if (matchResult === 'loss') {
+        updatedPlayerStats.totalLosses += 1;
+    }
+
+    return updatedPlayerStats;
+}
+
+function applyModeSpecificStats(updatedPlayerStats, matchData, matchResult) {
+    if (matchData.modeType === 'playerVsPlayerRanked' && matchResult === 'win') {
+        updatedPlayerStats.playerVsPlayerWins += 1;
+    }
+
+    if (matchData.modeType === 'botRanked' && matchResult === 'win') {
+        const botWinStatField = getBotWinStatField(matchData.botDifficulty);
+        if (botWinStatField) {
+            updatedPlayerStats[botWinStatField] += 1;
+        }
+    }
+
+    return updatedPlayerStats;
+}
+
+function updateLeaderboardForMatch(matchData) {
+    if (!matchData || matchData.scoreOrTime == null || !matchData.leaderboardModeType) {
+        return;
+    }
+
+    addScore({
+        playerName: matchData.playerA.playerName,
+        scoreOrTime: matchData.scoreOrTime,
+        timestamp: matchData.matchTimestamp,
+        modeType: matchData.leaderboardModeType
+    });
+}
+
+function isRapidlyRepeatedBotMatch(playerId, botId) {
+    const recentBotMatchCount = getRecentBotMatchCount(playerId, botId, BOT_MATCH_REPEAT_WINDOW_MS);
+    return recentBotMatchCount >= BOT_MATCH_MAX_REPEAT_COUNT;
+}
+
+function validateMatchData(matchData) {
+    if (!matchData || !matchData.matchId) {
+        return { isValid: false, message: 'missing match id' };
+    }
+
+    if (!matchData.playerA || !Number.isInteger(Number(matchData.playerA.playerId))) {
+        return { isValid: false, message: 'invalid playerA' };
+    }
+
+    if (matchData.playerB && matchData.playerB.playerId != null) {
+        if (!Number.isInteger(Number(matchData.playerB.playerId))) {
+            return { isValid: false, message: 'invalid playerB' };
+        }
+
+        if (String(matchData.playerA.playerId) === String(matchData.playerB.playerId)) {
+            return { isValid: false, message: 'player cannot play against themselves' };
+        }
+    }
+
+    if (matchData.result !== 'win' && matchData.result !== 'loss') {
+        return { isValid: false, message: 'invalid result' };
+    }
+
+    if (!matchData.modeType) {
+        return { isValid: false, message: 'missing mode type' };
+    }
+
+    return { isValid: true };
+}
+
+function validateBotMatchLegitimacy(matchData) {
+    const pendingBotMatch = pendingBotMatches.get(matchData.matchId);
+
+    if (!pendingBotMatch) {
+        return { isValid: false, message: 'bot match session not found' };
+    }
+
+    if (pendingBotMatch.completed) {
+        return { isValid: false, message: 'bot match already completed' };
+    }
+
+    if (String(pendingBotMatch.playerId) !== String(matchData.playerA.playerId)) {
+        return { isValid: false, message: 'bot match belongs to a different player' };
+    }
+
+    if (pendingBotMatch.botId !== matchData.playerB.botId) {
+        return { isValid: false, message: 'bot match bot mismatch' };
+    }
+
+    if (pendingBotMatch.botDifficulty !== matchData.botDifficulty) {
+        return { isValid: false, message: 'bot difficulty mismatch' };
+    }
+
+    const elapsedTime = Date.now() - pendingBotMatch.createdAt;
+    if (elapsedTime < BOT_MATCH_MINIMUM_DURATION_MS) {
+        return { isValid: false, message: 'bot match ended too quickly' };
+    }
+
+    if (isRapidlyRepeatedBotMatch(matchData.playerA.playerId, pendingBotMatch.botId)) {
+        return { isValid: false, message: 'too many rapid bot matches' };
+    }
+
+    return { isValid: true, pendingBotMatch };
+}
+
+function validateRateLimit(matchData) {
+    const recentMatchCount = getRecentMatchHistoryCount(matchData.playerA.playerId, BOT_MATCH_RATE_LIMIT_WINDOW_MS);
+
+    if (recentMatchCount > 0) {
+        return { isValid: false, message: 'match submissions are happening too quickly' };
+    }
+
+    return { isValid: true };
+}
+
+function persistPlayerMatchHistory(matchData, playerEloChange, playerEloAfter) {
+    recordMatchHistoryEntry({
+        matchId: matchData.matchId,
+        playerId: matchData.playerA.playerId,
+        opponentType: matchData.playerB.competitorType,
+        opponentId: matchData.playerB.competitorType === 'bot' ? matchData.playerB.botId : matchData.playerB.playerId,
+        opponentName: matchData.playerB.competitorType === 'bot' ? matchData.playerB.botName : matchData.playerB.playerName,
+        matchResult: matchData.result,
+        modeType: matchData.modeType,
+        playerEloChange,
+        playerEloAfter,
+        createdAt: matchData.matchTimestamp
+    });
+}
+
+function handleMatchResult(matchData) {
+    const matchTimestamp = matchData.matchTimestamp || new Date().toISOString();
+    const normalizedMatchData = {
+        ...matchData,
+        matchTimestamp
+    };
+
+    const validation = validateMatchData(normalizedMatchData);
+    if (!validation.isValid) {
+        return { success: false, rejected: true, message: validation.message };
+    }
+
+    if (isMatchAlreadyProcessed(normalizedMatchData.matchId)) {
+        return { success: true, ignored: true, message: 'duplicate match submission ignored' };
+    }
+
+    const rateLimitValidation = validateRateLimit(normalizedMatchData);
+    if (!rateLimitValidation.isValid) {
+        return { success: false, rejected: true, message: rateLimitValidation.message };
+    }
+
+    if (normalizedMatchData.playerB.competitorType === 'bot') {
+        const botValidation = validateBotMatchLegitimacy(normalizedMatchData);
+        if (!botValidation.isValid) {
+            return { success: false, rejected: true, message: botValidation.message };
+        }
+    }
+
+    let eloResult;
+    if (normalizedMatchData.playerB.competitorType === 'bot') {
+        eloResult = getAdjustedBotMatchEloResult(
+            normalizedMatchData.playerA,
+            normalizedMatchData.playerB,
+            normalizedMatchData.result === 'win' ? 1 : 0
+        );
+    } else {
+        eloResult = calculateEloChange(normalizedMatchData.playerA, normalizedMatchData.playerB, {
+            playerAScore: normalizedMatchData.result === 'win' ? 1 : 0,
+            kFactor: DEFAULT_ELO_K_FACTOR
+        });
+    }
+
+    updateCompetitorElo(normalizedMatchData.playerA, eloResult.playerANewElo);
+    updateCompetitorElo(normalizedMatchData.playerB, eloResult.playerBNewElo);
+
+    const updatedPlayerAStats = applyModeSpecificStats(
+        updateStatsForMatch(normalizedMatchData.playerA.playerId, normalizedMatchData.result),
+        normalizedMatchData,
+        normalizedMatchData.result
+    );
+    updatePlayerStats(normalizedMatchData.playerA.playerId, updatedPlayerAStats);
+
+    if (normalizedMatchData.playerB.competitorType === 'player') {
+        const playerBLossOrWin = normalizedMatchData.result === 'win' ? 'loss' : 'win';
+        const updatedPlayerBStats = applyModeSpecificStats(
+            updateStatsForMatch(normalizedMatchData.playerB.playerId, playerBLossOrWin),
+            { ...normalizedMatchData, modeType: 'playerVsPlayerRanked' },
+            playerBLossOrWin
+        );
+        updatePlayerStats(normalizedMatchData.playerB.playerId, updatedPlayerBStats);
+        createMatch(
+            normalizedMatchData.playerA.playerId,
+            normalizedMatchData.playerB.playerId,
+            normalizedMatchData.result === 'win' ? normalizedMatchData.playerA.playerId : normalizedMatchData.playerB.playerId
+        );
+    }
+
+    persistPlayerMatchHistory(normalizedMatchData, eloResult.playerAEloChange, eloResult.playerANewElo);
+
+    if (normalizedMatchData.playerB.competitorType === 'player') {
+        persistPlayerMatchHistory({
+            ...normalizedMatchData,
+            playerA: normalizedMatchData.playerB,
+            playerB: normalizedMatchData.playerA,
+            result: normalizedMatchData.result === 'win' ? 'loss' : 'win'
+        }, eloResult.playerBEloChange, eloResult.playerBNewElo);
+    } else {
+        const pendingBotMatch = pendingBotMatches.get(normalizedMatchData.matchId);
+        if (pendingBotMatch) {
+            pendingBotMatch.completed = true;
+        }
+    }
+
+    updateLeaderboardForMatch(normalizedMatchData);
+
+    return {
+        success: true,
+        eloResult,
+        playerSummary: getPlayerRankSummary(normalizedMatchData.playerA.playerId)
+    };
+}
+
+function finalizeStandardRoomMatch(roomName, winnerSocket, loserSocket, resultDetails = {}) {
+    const room = rooms[roomName];
+    if (!room || room.matchResultRecorded || !winnerSocket || !loserSocket) {
+        return null;
+    }
+
+    if (room.isRanked === false) {
+        room.matchResultRecorded = true;
+        winnerSocket.data.isPlaying = false;
+        loserSocket.data.isPlaying = false;
+        return {
+            winnerPlayerId: winnerSocket.data.userId,
+            loserPlayerId: loserSocket.data.userId,
+            winnerNewElo: null,
+            loserNewElo: null
+        };
+    }
+
+    const winnerCompetitor = getPlayerCompetitor(winnerSocket.data.userId, winnerSocket.data.username);
+    const loserCompetitor = getPlayerCompetitor(loserSocket.data.userId, loserSocket.data.username);
+    const matchResult = handleMatchResult({
+        matchId: room.activeMatchId,
+        playerA: winnerCompetitor,
+        playerB: loserCompetitor,
+        result: 'win',
+        modeType: 'playerVsPlayerRanked',
+        matchTimestamp: new Date().toISOString(),
+        kFactor: resultDetails.kFactor
+    });
+
+    if (!matchResult.success) {
+        return matchResult;
+    }
+
+    sendRankUpdate(winnerSocket, matchResult.eloResult.playerAEloChange);
+    sendRankUpdate(loserSocket, matchResult.eloResult.playerBEloChange);
+
+    return {
+        winnerPlayerId: winnerCompetitor.playerId,
+        loserPlayerId: loserCompetitor.playerId,
+        winnerNewElo: matchResult.eloResult.playerANewElo,
+        loserNewElo: matchResult.eloResult.playerBNewElo
+    };
 }
 
 function sendRoomList(targetSocket) {
@@ -568,8 +1315,12 @@ function removeSocketFromRoom(socket) {
     const wasPlayer = room.players.includes(socket.id);
     const hadOpponent = room.players.some(id => id !== socket.id);
     const wasTournamentPlayer = isTournamentRoom(room) && wasPlayer && socket.data.isPlaying;
+    const winnerSocket = !isTournamentRoom(room) && wasPlayer && socket.data.isPlaying
+        ? getOtherPlayerSocket(roomName, socket.id)
+        : null;
 
     if (!isTournamentRoom(room) && wasPlayer && socket.data.isPlaying && hadOpponent) {
+        finalizeStandardRoomMatch(roomName, winnerSocket, socket);
         sendToOtherPlayers(roomName, socket.id, 'opponentWin', { roomName });
     }
 
@@ -798,7 +1549,8 @@ io.on('connection', socket => {
 
     socket.emit('socketReady', {
         userId: socket.data.userId,
-        username: socket.data.username
+        username: socket.data.username,
+        ...getPlayerRankSummary(socket.data.userId)
     });
 
     sendRoomList(socket);
@@ -814,14 +1566,18 @@ io.on('connection', socket => {
         }
 
         const roomType = normalizeRoomType(data && data.roomType);
+        const isRanked = roomType === 'tournament' ? true : data && data.isRanked !== false;
         const roomName = makeRoomName();
         const password = data && typeof data.password === 'string' && data.password.trim()
             ? data.password.trim()
             : null;
         const baseRoom = {
             roomType,
+            isRanked,
             password,
             locked: false,
+            activeMatchId: null,
+            matchResultRecorded: false,
             ownerUserId: socket.data.userId,
             ownerUsername: socket.data.username,
             creatorSocketId: socket.id,
@@ -850,6 +1606,7 @@ io.on('connection', socket => {
             socket.emit('roomCreated', {
                 roomName,
                 roomType,
+                isRanked,
                 passwordProtected: !!password,
                 creatorSocketId: socket.id,
                 isCreator: true,
@@ -977,6 +1734,7 @@ io.on('connection', socket => {
                     socket.emit('roomJoined', {
                         roomName,
                         roomType: 'tournament',
+                        isRanked: true,
                         role: 'player',
                         creatorSocketId: room.creatorSocketId || null,
                         isCreator: sameUserId(room.creatorUserId, socket.data.userId),
@@ -1008,6 +1766,7 @@ io.on('connection', socket => {
         socket.emit('roomJoined', {
             roomName,
             roomType: room.roomType || 'standard',
+            isRanked: room.isRanked !== false,
             role,
             creatorSocketId: room.creatorSocketId || null,
             isCreator: sameUserId(room.creatorUserId, socket.data.userId)
@@ -1051,6 +1810,7 @@ io.on('connection', socket => {
         socket.emit('roomJoined', {
             roomName,
             roomType: room.roomType || 'standard',
+            isRanked: room.isRanked !== false,
             role: 'spectator',
             creatorSocketId: room.creatorSocketId || null,
             isCreator: false
@@ -1160,6 +1920,8 @@ io.on('connection', socket => {
                 playerSocket.data.isPlaying = false;
             }
         });
+        room.activeMatchId = createRoomMatchId(roomName);
+        room.matchResultRecorded = false;
 
         io.to(roomName).emit('gameStart', {
             roomName,
@@ -1249,7 +2011,9 @@ io.on('connection', socket => {
         const roomName = socket.data.roomName;
         if (!roomName || socket.data.roomRole !== 'player' || !rooms[roomName]) return;
 
-        if (isTournamentRoom(rooms[roomName])) {
+        const room = rooms[roomName];
+
+        if (isTournamentRoom(room)) {
             socket.data.isPlaying = false;
             maybeFinishTournamentBySurvivor(roomName).catch(err => {
                 console.log('tournament finish after gameOver failed', err);
@@ -1258,6 +2022,8 @@ io.on('connection', socket => {
         }
 
         socket.data.isPlaying = false;
+        const winnerSocket = getOtherPlayerSocket(roomName, socket.id);
+        finalizeStandardRoomMatch(roomName, winnerSocket, socket);
 
         sendToOtherPlayers(roomName, socket.id, 'opponentWin', { roomName });
         sendToSpectators(roomName, 'roomMessage', {

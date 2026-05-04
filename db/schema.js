@@ -1,8 +1,17 @@
 const TABLES_SQL = `
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY,
-    username TEXT NOT NULL UNIQUE,
-    password_hash TEXT
+    username TEXT NOT NULL,
+    password_hash TEXT,
+    bio TEXT NOT NULL DEFAULT '',
+    avatar_version INTEGER NOT NULL DEFAULT 0,
+    elo_rating INTEGER NOT NULL DEFAULT 1000,
+    total_wins INTEGER NOT NULL DEFAULT 0,
+    total_losses INTEGER NOT NULL DEFAULT 0,
+    bot_wins_easy INTEGER NOT NULL DEFAULT 0,
+    bot_wins_medium INTEGER NOT NULL DEFAULT 0,
+    bot_wins_hard INTEGER NOT NULL DEFAULT 0,
+    player_vs_player_wins INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS scores (
@@ -11,6 +20,38 @@ CREATE TABLE IF NOT EXISTS scores (
     score INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS leaderboard_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_name TEXT NOT NULL,
+    user_id INTEGER,
+    score_or_time INTEGER NOT NULL,
+    timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    mode_type TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS bot_ratings (
+    bot_id TEXT PRIMARY KEY,
+    bot_name TEXT NOT NULL,
+    elo_rating INTEGER NOT NULL DEFAULT 1000,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS elo_match_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    match_id TEXT NOT NULL,
+    player_id INTEGER NOT NULL,
+    opponent_type TEXT NOT NULL,
+    opponent_id TEXT NOT NULL,
+    opponent_name TEXT NOT NULL,
+    match_result TEXT NOT NULL,
+    mode_type TEXT NOT NULL,
+    player_elo_change INTEGER NOT NULL,
+    player_elo_after INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (player_id) REFERENCES users(id)
 );
 
 CREATE TABLE IF NOT EXISTS matches (
