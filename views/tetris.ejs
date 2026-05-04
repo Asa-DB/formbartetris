@@ -497,6 +497,7 @@
     .menu-card::-webkit-scrollbar,
     .menu-popout::-webkit-scrollbar,
     .controls-groups::-webkit-scrollbar,
+    .directory-grid::-webkit-scrollbar,
     #room-list::-webkit-scrollbar {
       width: 10px;
       height: 10px;
@@ -506,6 +507,7 @@
     .menu-card::-webkit-scrollbar-track,
     .menu-popout::-webkit-scrollbar-track,
     .controls-groups::-webkit-scrollbar-track,
+    .directory-grid::-webkit-scrollbar-track,
     #room-list::-webkit-scrollbar-track {
       background: #0c151d;
       border-left: 2px solid #17242d;
@@ -515,6 +517,7 @@
     .menu-card::-webkit-scrollbar-thumb,
     .menu-popout::-webkit-scrollbar-thumb,
     .controls-groups::-webkit-scrollbar-thumb,
+    .directory-grid::-webkit-scrollbar-thumb,
     #room-list::-webkit-scrollbar-thumb {
       background: linear-gradient(180deg, #365567, #28414f);
       border: 2px solid #0c151d;
@@ -526,6 +529,7 @@
     .menu-card::-webkit-scrollbar-thumb:hover,
     .menu-popout::-webkit-scrollbar-thumb:hover,
     .controls-groups::-webkit-scrollbar-thumb:hover,
+    .directory-grid::-webkit-scrollbar-thumb:hover,
     #room-list::-webkit-scrollbar-thumb:hover {
       background: linear-gradient(180deg, #4a7086, #355261);
     }
@@ -534,6 +538,7 @@
     .menu-card::-webkit-scrollbar-thumb:active,
     .menu-popout::-webkit-scrollbar-thumb:active,
     .controls-groups::-webkit-scrollbar-thumb:active,
+    .directory-grid::-webkit-scrollbar-thumb:active,
     #room-list::-webkit-scrollbar-thumb:active {
       background: linear-gradient(180deg, #58a39f, #3d6c6b);
     }
@@ -603,10 +608,27 @@
       word-break: break-word;
     }
 
-    .menu-actions {
-      display: flex;
-      flex-direction: column;
+    .menu-section-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 10px;
+      margin-top: 14px;
+    }
+
+    .menu-section {
+      min-width: 0;
+      padding: 12px;
+      border: 3px solid var(--frame);
+      background: var(--panel-alt);
+      box-shadow: inset -3px -3px 0 #17242d;
+      display: grid;
+      gap: 10px;
+    }
+
+    .menu-actions {
+      display: grid;
+      gap: 8px;
+      grid-template-columns: repeat(auto-fit, minmax(124px, 1fr));
     }
 
     .forty-line-results-modal {
@@ -837,6 +859,7 @@
 
     .menu-popout {
       display: none;
+      flex-direction: column;
       width: min(640px, 100%);
       max-height: min(88vh, 760px);
       overflow-y: auto;
@@ -1017,10 +1040,18 @@
     }
 
     .room-browser-top {
-      display: flex;
-      flex-direction: column;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 10px;
       margin-bottom: 14px;
+    }
+
+    .room-browser-top > * {
+      min-width: 0;
+    }
+
+    .room-browser-top .stack-fields {
+      grid-column: 1 / -1;
     }
 
     .tiny-row {
@@ -1501,6 +1532,16 @@
       gap: 14px;
     }
 
+    .profile-settings-shell {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      align-items: start;
+    }
+
+    .profile-settings-shell > .settings-actions,
+    .profile-settings-shell > .save-note {
+      grid-column: 1 / -1;
+    }
+
     .profile-settings-head {
       display: flex;
       gap: 14px;
@@ -1534,7 +1575,7 @@
     }
 
     textarea.input {
-      min-height: 100px;
+      min-height: 88px;
       resize: vertical;
       line-height: 1.8;
     }
@@ -1558,6 +1599,9 @@
     .directory-grid {
       display: grid;
       gap: 10px;
+      max-height: min(38vh, 320px);
+      overflow-y: auto;
+      padding-right: 4px;
     }
 
     .directory-card {
@@ -1787,9 +1831,18 @@
       }
 
       .tiny-row,
-      .settings-actions {
+      .settings-actions,
+      .menu-section-grid {
         grid-template-columns: 1fr;
         display: grid;
+      }
+
+      .profile-settings-shell {
+        grid-template-columns: 1fr;
+      }
+
+      .room-browser-top {
+        grid-template-columns: 1fr;
       }
 
       .forty-line-results-modal {
@@ -1818,6 +1871,10 @@
 
       .tiny-btn {
         width: 100%;
+      }
+
+      .menu-actions {
+        grid-template-columns: 1fr;
       }
 
       .room-card-top,
@@ -1946,9 +2003,8 @@
       </div>
 
       <div class="menu-summary">
-        <div class="top-status-label">Player Summary</div>
+        <div class="top-status-label">Player Stats</div>
         <div id="matchmaking-status-panel-copy" style="display:none;"></div>
-        <div id="room-info-menu" class="room-text">Singleplayer only</div>
         <div class="menu-summary-grid">
           <div class="menu-summary-card">
             <div class="stat-label">Elo</div>
@@ -1966,90 +2022,92 @@
         <div id="menu-quick-stats" class="quick-stats-line">PVP wins 0 | bot wins 0</div>
       </div>
 
-      <section class="menu-section">
-        <div class="section-heading">
-          <strong>Play</strong>
-          <span>Jump into local game modes.</span>
-        </div>
-        <div class="menu-actions">
-          <button id="primary-btn" class="btn" onclick="chooseSingleplayer()">Play Singleplayer</button>
-          <button id="forty-line-btn" class="btn secondary" onclick="chooseFortyLineMode()">40-Line Mode</button>
-          <button id="restart-btn" class="btn secondary" style="display:none;" onclick="window.location.href='/'">Restart Game</button>
-          <button id="start-room-btn" class="btn" style="display:none;" onclick="requestRoomStart()">Start Game</button>
-        </div>
-      </section>
+      <div class="menu-section-grid">
+        <section class="menu-section">
+          <div class="section-heading">
+            <strong>Play</strong>
+            <span>Jump into local game modes.</span>
+          </div>
+          <div class="menu-actions">
+            <button id="primary-btn" class="btn" onclick="chooseSingleplayer()">Play Singleplayer</button>
+            <button id="forty-line-btn" class="btn secondary" onclick="chooseFortyLineMode()">40-Line Mode</button>
+            <button id="restart-btn" class="btn secondary" style="display:none;" onclick="window.location.href='/'">Restart Game</button>
+            <button id="start-room-btn" class="btn" style="display:none;" onclick="requestRoomStart()">Start Game</button>
+          </div>
+        </section>
 
-      <section class="menu-section">
-        <div class="section-heading">
-          <strong>Online Play</strong>
-          <span>Browse ranked rooms or casual rooms in a dedicated modal.</span>
-        </div>
-        <div class="menu-actions">
-          <button id="online-btn" class="btn secondary" onclick="openOnlineMenu()">Open Online Play</button>
-        </div>
-      </section>
+        <section class="menu-section">
+          <div class="section-heading">
+            <strong>Online Play</strong>
+            <span>Browse ranked rooms or casual rooms in a dedicated modal.</span>
+          </div>
+          <div class="menu-actions">
+            <button id="online-btn" class="btn secondary" onclick="openOnlineMenu()">Open Online Play</button>
+          </div>
+        </section>
 
-      <section class="menu-section">
-        <div class="section-heading">
-          <strong>Bot Play</strong>
-          <span>Pick a ranked climb or a no-stakes practice match.</span>
-        </div>
-        <div class="menu-actions">
-          <button id="bot-play-btn" class="btn secondary" onclick="openBotPlayMenu()">Open Bot Play</button>
-        </div>
-      </section>
+        <section class="menu-section">
+          <div class="section-heading">
+            <strong>Bot Play</strong>
+            <span>Pick a ranked climb or a no-stakes practice match.</span>
+          </div>
+          <div class="menu-actions">
+            <button id="bot-play-btn" class="btn secondary" onclick="openBotPlayMenu()">Open Bot Play</button>
+          </div>
+        </section>
 
-      <section class="menu-section">
-        <div class="section-heading">
-          <strong>Leaderboards</strong>
-          <span>Review best runs and ranked records.</span>
-        </div>
-        <div class="menu-actions">
-          <button class="btn secondary" onclick="openPanel('leaderboards-panel')">Open Leaderboards</button>
-        </div>
-      </section>
+        <section class="menu-section">
+          <div class="section-heading">
+            <strong>Leaderboards</strong>
+            <span>Review best runs and ranked records.</span>
+          </div>
+          <div class="menu-actions">
+            <button class="btn secondary" onclick="openPanel('leaderboards-panel')">Open Leaderboards</button>
+          </div>
+        </section>
 
-      <section class="menu-section">
-        <div class="section-heading">
-          <strong>Player Stats</strong>
-          <span>Check wins, losses, and bot results.</span>
-        </div>
-        <div class="menu-actions">
-          <button class="btn secondary" onclick="openPanel('player-stats-panel')">Open Player Stats</button>
-        </div>
-      </section>
+        <section class="menu-section">
+          <div class="section-heading">
+            <strong>Player Stats</strong>
+            <span>Check wins, losses, and bot results.</span>
+          </div>
+          <div class="menu-actions">
+            <button class="btn secondary" onclick="openPanel('player-stats-panel')">Open Player Stats</button>
+          </div>
+        </section>
 
-      <section class="menu-section">
-        <div class="section-heading">
-          <strong>Players</strong>
-          <span>Browse player profiles and update your own card.</span>
-        </div>
-        <div class="menu-actions">
-          <button class="btn secondary" onclick="openPanel('player-directory-panel')">Open Player Directory</button>
-          <button class="btn secondary" onclick="openPanel('profile-settings-panel')">Edit Profile</button>
-        </div>
-      </section>
+        <section class="menu-section">
+          <div class="section-heading">
+            <strong>Players</strong>
+            <span>Browse player profiles and update your own card.</span>
+          </div>
+          <div class="menu-actions">
+            <button class="btn secondary" onclick="openPanel('player-directory-panel')">Open Player Directory</button>
+            <button class="btn secondary" onclick="openPanel('profile-settings-panel')">Edit Profile</button>
+          </div>
+        </section>
 
-      <section class="menu-section">
-        <div class="section-heading">
-          <strong>Settings</strong>
-          <span>Adjust mascots, audio, colors, and layout.</span>
-        </div>
-        <div class="menu-actions">
-          <button class="btn secondary" onclick="openPanel('companion-panel')">Mascots</button>
-          <button class="btn secondary" onclick="openPanel('settings-panel')">Audio & Colors</button>
-        </div>
-      </section>
+        <section class="menu-section">
+          <div class="section-heading">
+            <strong>Settings</strong>
+            <span>Adjust mascots, audio, colors, and layout.</span>
+          </div>
+          <div class="menu-actions">
+            <button class="btn secondary" onclick="openPanel('companion-panel')">Mascots</button>
+            <button class="btn secondary" onclick="openPanel('settings-panel')">Audio & Colors</button>
+          </div>
+        </section>
 
-      <section class="menu-section">
-        <div class="section-heading">
-          <strong>Controls</strong>
-          <span>Open the full keyboard layout in a dedicated modal.</span>
-        </div>
-        <div class="menu-actions">
-          <button id="controls-btn" class="btn secondary" onclick="openControlsMenu()">Open Controls</button>
-        </div>
-      </section>
+        <section class="menu-section">
+          <div class="section-heading">
+            <strong>Controls</strong>
+            <span>Open the full keyboard layout in a dedicated modal.</span>
+          </div>
+          <div class="menu-actions">
+            <button id="controls-btn" class="btn secondary" onclick="openControlsMenu()">Open Controls</button>
+          </div>
+        </section>
+      </div>
     </div>
 
     <div id="online-play-panel" class="menu-card menu-popout">
@@ -2281,12 +2339,14 @@
             <button class="btn secondary" type="button" onclick="document.getElementById('profile-avatar-input').click()">Upload Picture</button>
           </div>
         </div>
-        <div class="stack-fields">
-          <label for="profile-bio-input">Description</label>
-          <textarea id="profile-bio-input" class="input" maxlength="200" placeholder="Add a short player bio."></textarea>
-          <div class="tiny-row">
-            <span id="profile-bio-count" class="field-note">0 / 200</span>
-            <span class="field-note">Images are cropped, resized, and optimized automatically.</span>
+        <div class="profile-settings-card">
+          <div class="stack-fields">
+            <label for="profile-bio-input">Description</label>
+            <textarea id="profile-bio-input" class="input" maxlength="200" placeholder="Add a short player bio."></textarea>
+            <div class="tiny-row">
+              <span id="profile-bio-count" class="field-note">0 / 200</span>
+              <span class="field-note">Images are cropped, resized, and optimized automatically.</span>
+            </div>
           </div>
         </div>
         <div class="settings-actions">

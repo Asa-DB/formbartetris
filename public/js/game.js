@@ -144,8 +144,7 @@ const leaderboardState = {
   entriesByTab: {},
   errorMessageByTab: {},
   profileByPlayerId: {},
-  activeProfilePlayerId: null,
-  activeProfileEntry: null
+  activeProfilePlayerId: null
 };
 const PLAYER_PROFILE_CLOSE_MS = 180;
 const playerProfileState = {
@@ -168,6 +167,28 @@ function sameUserId(a, b) {
 
 function isOwnedByPlayer(ownerUserId) {
   return ownerUserId != null && sameUserId(ownerUserId, playerProfile.userId);
+}
+
+function isTextInputElement(element) {
+  if (!element || !(element instanceof HTMLElement)) {
+    return false;
+  }
+
+  if (element.isContentEditable) {
+    return true;
+  }
+
+  const tagName = element.tagName.toLowerCase();
+  if (tagName === 'textarea' || tagName === 'select') {
+    return true;
+  }
+
+  if (tagName !== 'input') {
+    return false;
+  }
+
+  const inputType = (element.type || '').toLowerCase();
+  return !['button', 'submit', 'reset', 'checkbox', 'radio', 'range', 'color', 'file'].includes(inputType);
 }
 
 function isTournamentMode() {
@@ -477,9 +498,7 @@ function setStatus(message) {
 function setRoomInfo(message) {
   const text = message || 'No room yet';
   const side = byId('room-info');
-  const menu = byId('room-info-menu');
   if (side) side.innerText = text;
-  if (menu) menu.innerText = text;
 }
 
 function setWatchLabel(message) {
@@ -1536,6 +1555,11 @@ function renderLeaderboardProfile(entry, playerProfile) {
   const profileEntry = playerProfile
     ? { ...entry, avatarUrl: playerProfile.avatarUrl, avatarVersion: playerProfile.avatarVersion }
     : entry;
+  const overallElo = playerProfile ? String(playerProfile.overallElo) : '--';
+  const pvpElo = playerProfile ? String(playerProfile.pvpOnlyElo) : '--';
+  const fortyLineBest = playerProfile
+    ? (playerProfile.fortyLineBestTime == null ? '--' : formatElapsedTime(playerProfile.fortyLineBestTime))
+    : getFallbackFortyLineValue(entry);
 
   elements.avatar.src = getPlayerAvatarUrl(profileEntry);
   elements.avatar.alt = `${entry.username} avatar`;
@@ -1543,14 +1567,9 @@ function renderLeaderboardProfile(entry, playerProfile) {
   elements.id.innerText = entry.playerId == null ? 'Legacy leaderboard entry' : `Formbar ID ${entry.playerId}`;
   elements.bio.innerText = getProfileBioText(playerProfile, entry);
   elements.grid.innerHTML = [
-    renderLeaderboardProfileStat('ELO With Bot Play', playerProfile ? String(playerProfile.overallElo) : '--'),
-    renderLeaderboardProfileStat('ELO Without Bot Play', playerProfile ? String(playerProfile.pvpOnlyElo) : '--'),
-    renderLeaderboardProfileStat(
-      '40-Line Personal Best',
-      playerProfile
-        ? (playerProfile.fortyLineBestTime == null ? '--' : formatElapsedTime(playerProfile.fortyLineBestTime))
-        : getFallbackFortyLineValue(entry)
-    )
+    renderLeaderboardProfileStat('ELO With Bot Play', overallElo),
+    renderLeaderboardProfileStat('ELO Without Bot Play', pvpElo),
+    renderLeaderboardProfileStat('40-Line Personal Best', fortyLineBest)
   ].join('');
 }
 
@@ -1626,7 +1645,6 @@ function showLeaderboardProfile(anchorElement) {
 }
 
 async function openLeaderboardProfile(entry, anchorElement = null) {
-  leaderboardState.activeProfileEntry = entry;
   leaderboardState.activeProfilePlayerId = entry.playerId ?? null;
   renderLeaderboardProfile(entry, null);
   showLeaderboardProfile(anchorElement);
@@ -1674,7 +1692,6 @@ function closeLeaderboardProfile() {
     return;
   }
 
-  leaderboardState.activeProfileEntry = null;
   leaderboardState.activeProfilePlayerId = null;
   playerProfileState.anchorElement = null;
   playerProfileState.requestId += 1;
@@ -3151,8 +3168,8 @@ const keys = {
 const DAS_DELAY = 170;
 const DAS_SPEED = 50;
 const AUTOPLAY_SPEEDS = {
-  human: { think: 150, rotate: 105, move: 78, drop: 52, finish: 130, hardDropBuffer: 0 },
-  fast: { rotate: 65, move: 48, drop: 24, finish: 80, hardDropBuffer: 2 }
+  human: { think: 170, rotate: 82, move: 62, drop: 28, finish: 110, hardDropBuffer: 1, earlyHardDropDistance: 5 },
+  fast: { think: 90, rotate: 42, move: 34, drop: 14, finish: 70, hardDropBuffer: 0, earlyHardDropDistance: 2 }
 };
 
 function resetAutoplayState() {
@@ -3294,7 +3311,7 @@ function findBestAutoplayMove() {
 function runPlannedAutoplay(speed) {
   if (!player.matrix) return;
 
-  const pieceKey = `${player.type}:${serializeMatrix(player.matrix)}:${player.pos.x}:${player.pos.y}`;
+  const pieceKey = String(player.type || '');
   if (pieceKey !== autoplayPieceKey) {
     const bestMove = findBestAutoplayMove();
     autoplayPieceKey = pieceKey;
@@ -3340,19 +3357,26 @@ function runPlannedAutoplay(speed) {
     return;
   }
 
-  if (player.pos.y < Math.max(0, autoplayPlan.y - speed.hardDropBuffer)) {
+  const rowsToLanding = autoplayPlan.y - player.pos.y;
+  const shouldHardDropNow = rowsToLanding <= speed.hardDropBuffer
+    || rowsToLanding >= (speed.earlyHardDropDistance || Number.POSITIVE_INFINITY);
+
+  if (shouldHardDropNow) {
+    if (!collide(arena, player)) {
+      hardDrop();
+      resetAutoplayState();
+      autoplayActionAt = now + speed.finish;
+    }
+    return;
+  }
+
+  if (rowsToLanding > 0) {
     if (softDropStep()) {
       autoplayActionAt = now + speed.drop;
       return;
     }
     resetAutoplayState();
     return;
-  }
-
-  if (!collide(arena, player)) {
-    hardDrop();
-    resetAutoplayState();
-    autoplayActionAt = now + speed.finish;
   }
 }
 
@@ -3744,12 +3768,20 @@ function update(time = 0) {
 }
 
 window.addEventListener('keydown', e => {
+  const target = e.target instanceof HTMLElement ? e.target : null;
+  const isTypingInField = isTextInputElement(target);
+
   if (pendingControlAction) {
     handleControlRebindKeydown(e);
     return;
   }
+
+  if (isTypingInField && e.key !== 'Escape') {
+    return;
+  }
+
   const controlAction = getControlActionForCode(e.code);
-  if (['moveLeft', 'moveRight', 'softDrop', 'rotateClockwise', 'hardDrop'].includes(controlAction)) e.preventDefault();
+  if (!isTypingInField && ['moveLeft', 'moveRight', 'softDrop', 'rotateClockwise', 'hardDrop'].includes(controlAction)) e.preventDefault();
   if (e.key === 'Escape' && isLeaderboardProfileOpen()) {
     closeLeaderboardProfile();
     e.preventDefault();
@@ -3791,7 +3823,7 @@ window.addEventListener('keydown', e => {
       unpause();
     }
   }
-  if (gameState !== 'PLAYING' || gameMode === 'spectator') return;
+  if (isTypingInField || gameState !== 'PLAYING' || gameMode === 'spectator') return;
   startFortyLineTimerIfNeeded();
   if (autoplayMode) return;
   if (controlAction in keys) keys[controlAction].down = true;
@@ -3828,6 +3860,9 @@ window.addEventListener('keydown', e => {
 
 window.addEventListener('keyup', e => {
   if (autoplayMode) return;
+  if (isTextInputElement(e.target instanceof HTMLElement ? e.target : null)) {
+    return;
+  }
   const controlAction = getControlActionForCode(e.code);
   if (controlAction in keys) keys[controlAction].down = false;
 });
